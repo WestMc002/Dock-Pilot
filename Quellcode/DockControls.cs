@@ -255,7 +255,9 @@ namespace DockPilot
     internal sealed class NavList : Control
     {
         private const char GlyphMenu = '\uE700', GlyphPin = '\uE718', GlyphUnpin = '\uE77A';
-        private const int HitMenu = -2, HitPin = -3;
+        private const int HitMenu = -2, HitPin = -3, HitExtras = -4;
+        private const char GlyphExtras = '\uE713';
+        private bool _extrasActive;
 
         private readonly float _sc;
         private readonly List<KeyValuePair<char, string>> _items = new List<KeyValuePair<char, string>>();
@@ -263,7 +265,17 @@ namespace DockPilot
         private bool _pinned = true, _overlay;
         private readonly ToolTip _tip = new ModernToolTip();
 
-        public event EventHandler SelectedChanged, MenuClicked, PinClicked;
+        public event EventHandler SelectedChanged, MenuClicked, PinClicked, ExtrasClicked;
+
+        /// <summary>Knopf „Extras“ unten hervorheben, solange sein Menü offen ist.</summary>
+        public bool ExtrasActive
+        {
+            get { return _extrasActive; }
+            set { _extrasActive = value; Invalidate(); }
+        }
+
+        /// <summary>Lage des Knopfs „Extras“ (für das Menü rechts darüber).</summary>
+        public Rectangle ExtrasBounds { get { return ExtrasRect; } }
 
         public NavList(float scale)
         {
@@ -313,6 +325,9 @@ namespace DockPilot
 
         private Rectangle PinRect { get { return new Rectangle(Width - S(10) - S(36), S(4) + S(2), S(36), S(36)); } }
 
+        /// <summary>Unten: „Extras“ (Zahnrad), wie die Einträge 40 hoch mit 10 Rand.</summary>
+        private Rectangle ExtrasRect { get { return new Rectangle(S(10), Height - S(10) - S(40), Width - S(20), S(40)); } }
+
         private Rectangle ItemRect(int i)
         {
             int top = S(4) + S(40) + S(10);
@@ -323,6 +338,7 @@ namespace DockPilot
         {
             if (MenuRect.Contains(p)) return HitMenu;
             if (Wide && PinRect.Contains(p)) return HitPin;
+            if (ExtrasRect.Contains(p)) return HitExtras;
             for (int i = 0; i < _items.Count; i++) if (ItemRect(i).Contains(p)) return i;
             return -1;
         }
@@ -336,6 +352,7 @@ namespace DockPilot
             Invalidate();
             string tip = h == HitMenu ? "Navigation aus- bzw. einklappen"
                 : h == HitPin ? (_pinned ? "Navigation lösen (einklappbar)" : "Navigation anpinnen")
+                : h == HitExtras && !Wide ? "Extras"
                 : h >= 0 && !Wide ? _items[h].Value : null;
             _tip.SetToolTip(this, tip);
         }
@@ -365,6 +382,7 @@ namespace DockPilot
             if (!same) return;
             if (h == HitMenu) { if (MenuClicked != null) MenuClicked(this, EventArgs.Empty); }
             else if (h == HitPin) { if (PinClicked != null) PinClicked(this, EventArgs.Empty); }
+            else if (h == HitExtras) { if (ExtrasClicked != null) ExtrasClicked(this, EventArgs.Empty); }
             else if (h >= 0)
             {
                 if (h == _sel) { if (SelectedChanged != null) SelectedChanged(this, EventArgs.Empty); } // auch nochmal: klappt die Navigation ein
@@ -416,6 +434,18 @@ namespace DockPilot
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
             }
 
+            // unten: Extras
+            {
+                Rectangle r = ExtrasRect;
+                Fill(g, r, _extrasActive ? selFill : _down == HitExtras ? downFill : _hover == HitExtras ? hoverFill : Color.Empty);
+                DrawGlyph(g, GlyphExtras, 14f, new Rectangle(r.X + S(14), r.Y, S(20), r.Height), p.Text);
+                int tx = r.X + S(46);
+                if (Wide && r.Right - S(8) - tx > S(20))
+                    using (Font f = Theme.UiFont(9.5f * 96f / 72f * _sc, FontStyle.Regular))
+                        TextRenderer.DrawText(g, "Extras", f, new Rectangle(tx, r.Y, r.Right - S(8) - tx, r.Height), p.Text,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+            }
+
             if (_overlay)
                 using (Pen pen = new Pen(p.Dark ? Color.FromArgb(60, 60, 60) : Color.FromArgb(224, 224, 224)))
                     g.DrawLine(pen, Width - 1, 0, Width - 1, Height);
@@ -429,11 +459,18 @@ namespace DockPilot
                 g.FillPath(b, path);
         }
 
+        /// <summary>
+        /// Symbol wie in WindowGrid (NavButton): Kästchen pt × 96/72 × Skalierung, das Zeichen darin nach seinen
+        /// tatsächlich gezeichneten Pixeln mittig (MenuHelper.Glyph) – sonst wirken die Symbole zu groß.
+        /// </summary>
         private void DrawGlyph(Graphics g, char glyph, float pt, Rectangle r, Color color)
         {
-            using (Font gf = new Font(Theme.IconFontName, pt * _sc * 96f / 72f, GraphicsUnit.Pixel))
-                TextRenderer.DrawText(g, glyph.ToString(), gf, r, color,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            int size = (int)Math.Round(pt * 96f / 72f * _sc);
+            using (Image img = MenuHelper.Glyph(glyph, color, size))
+            {
+                if (img == null) return;
+                g.DrawImage(img, r.X + (r.Width - size) / 2, r.Y + (r.Height - size) / 2, size, size);
+            }
         }
     }
 

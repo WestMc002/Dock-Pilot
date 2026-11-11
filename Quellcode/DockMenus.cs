@@ -181,6 +181,10 @@ namespace DockPilot
         /// <summary>Unsichtbare Leerzeile unter dem letzten Eintrag (Padding.Bottom wird von Windows ignoriert).</summary>
         public void End()
         {
+            // oben gleich viel Luft wie unten: Padding oben (4) + 2 = Leerzeile unten (6), wie bei den Ordnermenüs
+            // (nicht beim Tray-Menü mit Kopfzeile – dessen Maße folgen der Vorlage Monitor Dimmer)
+            if (Menu.Items.Count > 0 && !(Menu.Items[0] is MenuSpacer) && !(Menu.Items[0] is MenuHeader))
+                Menu.Items.Insert(0, new MenuSpacer((int)Math.Round(2 * Scale)));
             Menu.Items.Add(new MenuSpacer((int)(6 * Scale)));
         }
 

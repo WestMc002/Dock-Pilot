@@ -6,6 +6,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -44,6 +45,7 @@ namespace DockPilot
         private bool _navOpen;                    // nicht angepinnt, aber ausgeklappt (liegt über dem Inhalt)
         private int _navSpace;                    // Platz, den die Navigation links belegt (230 bzw. 68 × Skalierung)
         private readonly Timer _navTimer = new Timer { Interval = 400 };
+        private readonly Timer _navHover = new Timer { Interval = 400 }; // nicht angepinnt: Maus kurz auf der Navigation → ausklappen
         private Control[] _content;               // rechts der Navigation, wird beim Anpinnen verschoben
         private Card[] _pages;
         private Stepper _labelSize;
@@ -59,7 +61,8 @@ namespace DockPilot
         private Slider _showDelay, _hideDelay;
         private Label _showValue, _hideValue;
         private ComboHotkeyBox _hotkey;
-        private ModernButton _btnSave, _btnCancel, _btnDefaults;
+        private ModernButton _btnSave, _btnCancel;
+        private ContextMenuStrip _extrasMenu;
         private Label _error;
         private PictureBox _logo;
         private UpdateBar _bar;
@@ -351,7 +354,7 @@ namespace DockPilot
             tip.SetToolTip(hkLabel, "Blendet das Dock ein und aus. Feld anklicken und Tasten drücken,\nEntf löscht das Tastenkürzel.");
 
             // --- Seite: Allgemein
-            Card general = MakeCard("Allgemein", new Rectangle(contentX, top, colW, S(314)));
+            Card general = MakeCard("Allgemein", new Rectangle(contentX, top, colW, S(206)));
             _autostart = MakeToggle();
             AddRow(general, "Mit Windows starten", _autostart, S(54));
             ModernButton import = new ModernButton();
@@ -376,40 +379,6 @@ namespace DockPilot
                 }
             };
 
-            ModernButton export = new ModernButton();
-            export.Text = "Exportieren …";
-            export.Size = new Size(S(130), S(30));
-            Label expLabel = AddRow(general, "Dock und Einstellungen sichern", export, S(196));
-            tip.SetToolTip(expLabel, "Schreibt Einträge, Einstellungen und übernommene Symbole in eine Datei,\nz. B. für einen zweiten PC. Gesichert wird der zuletzt gespeicherte Stand.");
-            export.Click += delegate
-            {
-                using (SaveFileDialog dlg = new SaveFileDialog())
-                {
-                    dlg.Title = "Dock und Einstellungen sichern";
-                    dlg.Filter = Backup.Filter;
-                    dlg.FileName = "Dock Pilot Sicherung " + DateTime.Now.ToString("yyyy-MM-dd") + Backup.Extension;
-                    if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                    string err = Backup.Export(dlg.FileName);
-                    if (err != null) ShowStatus("Sicherung fehlgeschlagen: " + err, false);
-                    else ShowStatus("Sicherung gespeichert.", true);
-                }
-            };
-            ModernButton restore = new ModernButton();
-            restore.Text = "Importieren …";
-            restore.Size = new Size(S(130), S(30));
-            Label resLabel = AddRow(general, "Sicherung wiederherstellen", restore, S(246));
-            tip.SetToolTip(resLabel, "Ersetzt Einträge und Einstellungen durch den Stand aus einer Sicherungsdatei.");
-            restore.Click += delegate
-            {
-                if (ImportBackup != null && ImportBackup(this))
-                {
-                    _edit.CopyFrom(_original);
-                    LoadValues(false);
-                    _baseline = Snapshot();
-                    ShowStatus("Sicherung wiederhergestellt.", true);
-                }
-            };
-
             _pages = new Card[] { pos, icons, zoomCard, label, behave, general };
             _nav.Add('\uE7F4', "Position");
             _nav.Add('\uE8A9', "Symbole");
@@ -424,19 +393,33 @@ namespace DockPilot
                 else { _navOpen = !_navOpen; ApplyNav(); }
             };
             _nav.PinClicked += delegate { SetNavPinned(!_original.NavPinned); };
+            _nav.ExtrasClicked += delegate { ShowExtrasMenu(); };
             _navTimer.Tick += delegate
             {
                 // ausgeklappt, nicht angepinnt: wieder einklappen, sobald die Maus die Navigation verlässt
                 if (!_navOpen || _original.NavPinned || !Visible) return;
+                if (_extrasMenu != null && !_extrasMenu.IsDisposed && _extrasMenu.Visible) return; // Extras-Menü offen
                 if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) { _navOpen = false; ApplyNav(); }
             };
             _navTimer.Start();
+            // nicht angepinnt: verweilt die Maus kurz auf der eingeklappten Navigation, klappt sie aus (Namen sichtbar)
+            // und beim Verlassen wieder ein – ☰ funktioniert weiterhin
+            _nav.MouseEnter += delegate { if (!_original.NavPinned && !_navOpen) _navHover.Start(); };
+            _nav.MouseLeave += delegate { _navHover.Stop(); };
+            _navHover.Tick += delegate
+            {
+                _navHover.Stop();
+                if (_original.NavPinned || _navOpen || !Visible) return;
+                if (_extrasMenu != null && !_extrasMenu.IsDisposed && _extrasMenu.Visible) return;
+                if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) return;
+                _navOpen = true;
+                ApplyNav();
+            };
             ShowPage(0);
 
             // --- Schaltflächen
             int by = top + pageH + S(24);
             int right = contentX + colW;
-            _btnDefaults = MakeButton("Standardwerte", false, new Rectangle(contentX, by, S(140), S(34)));
             _btnCancel = MakeButton("Abbrechen", false, new Rectangle(right - S(120) - S(10) - S(120), by, S(120), S(34)));
             _btnSave = MakeButton("Speichern", true, new Rectangle(right - S(120), by, S(120), S(34)));
             _error = MakeLabel("", 12.5f, false);
@@ -444,19 +427,9 @@ namespace DockPilot
             _error.AutoEllipsis = true;
             _error.TextAlign = ContentAlignment.MiddleLeft;
             _error.Tag = "error";
-            _error.Bounds = new Rectangle(contentX + S(140) + S(12), by, _btnCancel.Left - S(12) - (contentX + S(140) + S(12)), S(34));
+            _error.Bounds = new Rectangle(contentX, by, _btnCancel.Left - S(12) - contentX, S(34));
             Controls.Add(_error);
-            _content = new Control[] { pos, icons, zoomCard, label, behave, general, _btnDefaults, _btnCancel, _btnSave, _error };
-            _btnDefaults.Click += delegate
-            {
-                Settings d = new Settings();
-                d.FirstRun = false;
-                d.UpdateCheck = _edit.UpdateCheck;
-                d.LastUpdateCheck = _edit.LastUpdateCheck;
-                d.NavPinned = _edit.NavPinned;
-                _edit.CopyFrom(d);
-                LoadValues(false);
-            };
+            _content = new Control[] { pos, icons, zoomCard, label, behave, general, _btnCancel, _btnSave, _error };
             _btnCancel.Click += delegate { _discard = true; Close(); }; // Abbrechen verwirft ohne Rückfrage
             _btnSave.Click += delegate { Save(); };
 
@@ -868,6 +841,88 @@ namespace DockPilot
             BeginInvoke((MethodInvoker)ApplyTheme);
         }
 
+        // ------------------------------------------------------------------ Extras (unten in der Navigation)
+
+        /// <summary>„Extras“: Menü rechts über dem Knopf (Info, Anleitung, Fehlerprotokoll, Sichern/Wiederherstellen, Standardwerte).</summary>
+        private void ShowExtrasMenu()
+        {
+            if (_extrasMenu != null) { MenuBuilder.DisposeDeep(_extrasMenu.Items); _extrasMenu.Dispose(); _extrasMenu = null; }
+            MenuBuilder mb = new MenuBuilder();
+            mb.Menu.Items.Add(mb.Item("Info über Dock Pilot", MenuHelper.Info, delegate { AboutDialog.ShowFor(this); }));
+            mb.Menu.Items.Add(mb.Item("Anleitung öffnen", MenuHelper.Document, delegate
+            {
+                OpenFile(Path.Combine(AppInfo.ExeDirectory, "Anleitung.txt"), "Die Anleitung wurde nicht gefunden.");
+            }));
+            mb.Menu.Items.Add(mb.Item("Fehlerprotokoll öffnen", MenuHelper.Log, delegate
+            {
+                OpenFile(Path.Combine(Settings.DataDirectory, "Fehler.log"), "Es gibt noch kein Fehlerprotokoll.");
+            }));
+            mb.Separator();
+            mb.Menu.Items.Add(mb.Item("Dock und Einstellungen sichern …", '\uE74E', ExportBackup));
+            mb.Menu.Items.Add(mb.Item("Sicherung wiederherstellen …", MenuHelper.Download, RestoreBackup));
+            mb.Separator();
+            mb.Menu.Items.Add(mb.Item("Standardwerte", MenuHelper.Refresh, ResetDefaults));
+            mb.End();
+            ContextMenuStrip m = mb.Menu;
+            _extrasMenu = m;
+            _nav.ExtrasActive = true; // ausgewählt, solange das Menü offen ist
+            m.Closed += delegate
+            {
+                if (!_nav.IsDisposed) _nav.ExtrasActive = false;
+                CloseNav();
+            };
+            Rectangle r = _nav.ExtrasBounds;
+            m.Show(_nav, new Point(r.Right + S(4), r.Bottom), ToolStripDropDownDirection.AboveRight);
+        }
+
+        private void OpenFile(string path, string missing)
+        {
+            try
+            {
+                if (!File.Exists(path)) { ShowStatus(missing, false); return; }
+                Shell.Open(path, "", "");
+            }
+            catch (Exception ex) { ShowStatus(ex.Message, false); }
+        }
+
+        /// <summary>Einträge, Einstellungen und Symbole in eine Datei sichern (der zuletzt gespeicherte Stand).</summary>
+        private void ExportBackup()
+        {
+            using (SaveFileDialog dlg = new SaveFileDialog())
+            {
+                dlg.Title = "Dock und Einstellungen sichern";
+                dlg.Filter = Backup.Filter;
+                dlg.FileName = "Dock Pilot Sicherung " + DateTime.Now.ToString("yyyy-MM-dd") + Backup.Extension;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                string err = Backup.Export(dlg.FileName);
+                if (err != null) ShowStatus("Sicherung fehlgeschlagen: " + err, false);
+                else ShowStatus("Sicherung gespeichert.", true);
+            }
+        }
+
+        /// <summary>Sicherung einspielen: ersetzt Einträge und Einstellungen (mit Rückfrage im Tray-Teil).</summary>
+        private void RestoreBackup()
+        {
+            if (ImportBackup == null || !ImportBackup(this)) return;
+            _edit.CopyFrom(_original);
+            LoadValues(false);
+            _baseline = Snapshot();
+            ShowStatus("Sicherung wiederhergestellt.", true);
+        }
+
+        /// <summary>Alle Seiten auf die Standardwerte setzen; gilt erst nach „Speichern“.</summary>
+        private void ResetDefaults()
+        {
+            Settings d = new Settings();
+            d.FirstRun = false;
+            d.UpdateCheck = _edit.UpdateCheck;
+            d.LastUpdateCheck = _edit.LastUpdateCheck;
+            d.NavPinned = _edit.NavPinned;
+            _edit.CopyFrom(d);
+            LoadValues(false);
+            ShowStatus("Standardwerte geladen – mit „Speichern“ übernehmen.", true);
+        }
+
         /// <summary>Gibt es Änderungen, die noch nicht gespeichert sind? (Zustand der Felder mit dem gespeicherten vergleichen)</summary>
         private bool HasChanges()
         {
@@ -896,7 +951,7 @@ namespace DockPilot
         {
             if (!_discard && !Demo.Active && e.CloseReason == CloseReason.UserClosing && HasChanges())
             {
-                DialogResult r = MessageBox.Show(this, "Die Änderungen in den Einstellungen sind noch nicht gespeichert.\n\nÄnderungen verwerfen?",
+                DialogResult r = MessageBox.Show(this, "Die Änderungen sind noch nicht gespeichert.\n\nÄnderungen verwerfen?",
                     AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
                 if (r != DialogResult.Yes) e.Cancel = true;
             }
@@ -953,10 +1008,12 @@ namespace DockPilot
         {
             if (disposing)
             {
+                if (_extrasMenu != null) { MenuBuilder.DisposeDeep(_extrasMenu.Items); _extrasMenu.Dispose(); }
                 SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
                 Updater.AvailableChanged -= _onUpdateChanged;
                 if (_logo != null && _logo.Image != null) _logo.Image.Dispose();
                 _navTimer.Dispose();
+                _navHover.Dispose();
             }
             base.Dispose(disposing);
         }

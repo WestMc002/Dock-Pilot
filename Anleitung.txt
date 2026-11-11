@@ -64,7 +64,9 @@ Klick auf das Tray-Symbol oder Rechtsklick ins Dock > Einstellungen. Änderungen
 gelten erst nach "Speichern".
 Die Seiten wählt man links in der Navigation. ☰ klappt sie ein und aus, die
 Stecknadel pinnt sie an (angepinnt bleibt sie offen, sonst klappt sie nach der
-Auswahl wieder ein).
+Auswahl wieder ein). Nicht angepinnt klappt sie auch aus, wenn die Maus kurz
+darauf verweilt, und beim Verlassen wieder ein. Unten öffnet "Extras" ein Menü mit Info, Anleitung,
+Fehlerprotokoll, Sichern und Wiederherstellen sowie Standardwerte.
 - Position: Bildschirm, Rand (oben, unten, links, rechts), Abstand, Zentrierung
   (-100 % bis 100 %), immer im Vordergrund oder Fenster dürfen das Dock
   überdecken (dann holt die Maus es auf Wunsch nach vorne)
@@ -85,10 +87,11 @@ Auswahl wieder ein).
   (Spiele, Videos), laufende Programme nach vorne holen, Einträge sperren,
   Animationen (aus, schnell, normal, langsam), Tastenkürzel zum Ein- und
   Ausblenden
-- Allgemein: mit Windows starten, RocketDock übernehmen, Datenordner öffnen,
-  Dock und Einstellungen in eine Datei sichern (*.dockpilot) und
+- Allgemein: mit Windows starten, RocketDock übernehmen, Datenordner öffnen
+- Extras: Dock und Einstellungen in eine Datei sichern (*.dockpilot) und
   wiederherstellen, z. B. für einen zweiten PC. Beim Wiederherstellen bleiben
   die bisherigen Dateien als ".vor-import" im Datenordner liegen.
+  "Standardwerte" setzt alle Seiten zurück, gilt aber erst nach "Speichern".
 
 Passen nicht alle Symbole auf den Bildschirm, verkleinert Dock Pilot sie
 automatisch.
