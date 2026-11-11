@@ -1,0 +1,19 @@
+# Lokale Sicherungen und Build-Ergebnisse
+Backup/
+Bin/
+*.exe
+*.neu.exe
+Erstellen.log
+Quellcode/VersionInfo.cs
+Screenshots/Fehler.txt
+
+# Eigene Entwürfe
+Design/
+
+# Laufzeitdaten (persönliche Einstellungen)
+*.ini
+*.dockpilot
+
+# Windows
+Thumbs.db
+desktop.ini

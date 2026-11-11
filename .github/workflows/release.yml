@@ -1,0 +1,144 @@
+# Dock Pilot - automatische Bereitstellung als ZIP (Dock Pilot.exe + Anleitung.txt)
+# Ausloeser: Aenderung dieser Datei auf main oder per Hand ueber "Run workflow"
+# (Eingabe der Versionsnummer). Ohne Eingabe gilt die Version aus dem neuesten
+# Commit "Dock Pilot <Version> - Aenderungen".
+# Gibt es das Release zur Version schon, wird nichts neu gebaut, nur der Text aufgefrischt.
+# Vorabversion: steht im Titel des Versions-Commits "Vorabversion", wird das Release als
+# Vorabversion (Pre-release) angelegt. Per Hand: Eingabe "vorab" = ja/nein, auto = wie im Commit.
+# Vorabversionen liefert /releases/latest nicht aus - die Update-Pruefung bietet sie nicht an.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release.yml]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (z. B. 1.4.2026.1110)'
+        required: false
+      vorab:
+        description: 'Vorabversion (auto = wie im Commit-Titel)'
+        required: false
+        default: 'auto'
+        type: choice
+        options: [auto, ja, nein]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version lesen
+        id: ver
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $ver = '${{ github.event.inputs.version }}'
+          if(-not $ver) {
+            $subj = git log --format=%s | Where-Object { $_ -match '^Dock Pilot (\d+\.\d+\.\d+\.\d+)' } | Select-Object -First 1
+            if($subj -match '^Dock Pilot (\d+\.\d+\.\d+\.\d+)') { $ver = $Matches[1] }
+          }
+          if($ver -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "keine gueltige Version gefunden: $ver" }
+          "ver=$ver" >> $env:GITHUB_OUTPUT
+          # Vorabversion? Eingabe ja/nein hat Vorrang, sonst Titel des Versions-Commits
+          $vorab = '${{ github.event.inputs.vorab }}'
+          if(-not $vorab) { $vorab = 'auto' }
+          $pre = 0
+          if($vorab -eq 'ja') { $pre = 1 }
+          elseif($vorab -eq 'auto') {
+            $subj = git log --format=%s -F --grep="$ver" -n 1
+            if($subj -match 'Vorabversion') { $pre = 1 }
+          }
+          "pre=$pre" >> $env:GITHUB_OUTPUT
+          "vorab=$vorab" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $ver, Vorabversion: $pre"
+          gh release view "v$ver" *> $null
+          if($LASTEXITCODE -eq 0) { "exists=1" >> $env:GITHUB_OUTPUT; Write-Host "Release v$ver existiert bereits - nur Text auffrischen" }
+          else { "exists=0" >> $env:GITHUB_OUTPUT }
+          exit 0
+
+      - name: Release-Text erstellen
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $ver = '${{ steps.ver.outputs.ver }}'
+          # neuester Commit, dessen Text die Versionsnummer nennt
+          $sha = git log --format=%H -F --grep="$ver" -n 1
+          $punkte = @()
+          if($sha) {
+            $punkte = @(git log -1 --format=%B $sha | Where-Object { $_ -match '^\s*- ' } | ForEach-Object { $_.Trim() })
+          }
+          $zeilen = New-Object System.Collections.Generic.List[string]
+          if('${{ steps.ver.outputs.pre }}' -eq '1') {
+            $zeilen.Add('> **Vorabversion** zum Testen. Die automatische Update-Prüfung bietet Vorabversionen nicht an.')
+            $zeilen.Add('')
+          }
+          if($punkte.Count -gt 0) {
+            $zeilen.Add('## Änderungen'); $zeilen.Add('')
+            foreach($p in $punkte) { $zeilen.Add($p) }
+            $zeilen.Add('')
+          }
+          $zeilen.Add('## Installation')
+          $zeilen.Add('')
+          $zeilen.Add("- ZIP ``Dock-Pilot-$ver.zip`` herunterladen und in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Dock Pilot`` – Dock Pilot speichert seine Einstellungen in ``%LOCALAPPDATA%\Dock Pilot``.")
+          $zeilen.Add('- `Dock Pilot.exe` starten. Das Dock erscheint am unteren Bildschirmrand, das Symbol im Infobereich neben der Uhr; Linksklick darauf öffnet die Einstellungen.')
+          $zeilen.Add('- Erste Schritte: Programme, Verknüpfungen und Ordner aus dem Explorer ins Dock ziehen; Rechtsklick ins Dock zum Bearbeiten. Ist RocketDock installiert, bietet Dock Pilot beim ersten Start die Übernahme aller Einträge an.')
+          $zeilen.Add('- Update: Dock Pilot sieht selbst auf GitHub nach neuen Versionen und aktualisiert sich auf Klick (Tray-Menü, Hinweis im Infobereich oder Info-Fenster). Von Hand: Dock Pilot beenden und die vorhandene `Dock Pilot.exe` ersetzen.')
+          $zeilen.Add('- Voraussetzungen: Windows 10 oder 11 mit .NET Framework 4.x (in Windows enthalten).')
+          $zeilen.Add('- Ausführliche Beschreibung in `Anleitung.txt` im ZIP.')
+          [IO.File]::WriteAllText("$PWD\notes.md", ($zeilen -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          Get-Content notes.md -Encoding utf8
+
+      - name: Kompilieren
+        if: steps.ver.outputs.exists == '0'
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.ver }}'
+          @(
+            "[assembly: System.Reflection.AssemblyVersion(`"$ver`")]"
+            "[assembly: System.Reflection.AssemblyFileVersion(`"$ver`")]"
+            "[assembly: System.Reflection.AssemblyInformationalVersion(`"$ver`")]"
+            "namespace DockPilot { public static partial class AppInfo { public const string Version = `"$ver`"; } }"
+          ) | Set-Content Quellcode\VersionInfo.cs -Encoding utf8
+          New-Item -ItemType Directory -Force Bin | Out-Null
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:Bin\Dock Pilot.exe" `
+            "/win32icon:Resources\Dock Pilot.ico" `
+            "/resource:Resources\Dock Pilot.ico,Dock Pilot.ico" `
+            "/resource:Resources\GS-Logo.png,GS-Logo.png" `
+            /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
+            "/win32manifest:Quellcode\app.manifest" Quellcode\*.cs
+          if($LASTEXITCODE -ne 0) { throw 'Kompilieren fehlgeschlagen' }
+          (Get-Item 'Bin\Dock Pilot.exe').VersionInfo.FileVersion
+
+      - name: Release anlegen
+        if: steps.ver.outputs.exists == '0'
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.ver }}'
+          $zip = "Dock-Pilot-$ver.zip"
+          Compress-Archive -Path 'Bin\Dock Pilot.exe', Anleitung.txt -DestinationPath $zip -Force
+          $ghArgs = @("v$ver", $zip, '--title', "Dock Pilot $ver", '--notes-file', 'notes.md', '--target', $env:GITHUB_SHA)
+          if('${{ steps.ver.outputs.pre }}' -eq '1') { $ghArgs += '--prerelease' }
+          gh release create @ghArgs
+
+      - name: Release-Text auffrischen
+        if: steps.ver.outputs.exists == '1'
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.ver }}'
+          $ghArgs = @("v$ver", '--notes-file', 'notes.md')
+          # Vorabversion nur umstellen, wenn ausdrücklich gewählt (ja/nein)
+          if('${{ steps.ver.outputs.vorab }}' -eq 'ja') { $ghArgs += '--prerelease=true' }
+          if('${{ steps.ver.outputs.vorab }}' -eq 'nein') { $ghArgs += '--prerelease=false'; $ghArgs += '--latest' }
+          gh release edit @ghArgs

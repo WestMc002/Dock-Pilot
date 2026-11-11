@@ -1,0 +1,110 @@
+Dock Pilot 1  –  Programmleiste am Bildschirmrand (Nachfolger von RocketDock)
+=============================================================================
+
+So funktioniert's
+-----------------
+Dock Pilot zeigt eine Leiste mit Programmen, Ordnern, Webseiten und Ordnermenüs
+am Bildschirmrand. Ein Klick startet den Eintrag. Unter der Maus werden die
+Symbole größer, der Name erscheint daneben.
+
+- Läuft ein Programm schon, holt ein Klick sein Fenster nach vorne (wie in der
+  Taskleiste). Ist es schon vorne, wird es minimiert. Umschalt + Klick oder
+  ein Klick mit der mittleren Maustaste startet das Programm noch einmal.
+- Fenstervorschau wie in der Taskleiste: Bleibt die Maus kurz auf einem
+  laufenden Programm, erscheinen seine Fenster als Vorschaubilder. Ein Klick
+  holt das Fenster nach vorne, das × (oder ein Mittelklick) schließt es. Hat
+  ein Programm mehrere Fenster, zeigt auch ein Klick auf das Symbol die
+  Vorschau. Ist die Vorschau abgeschaltet, erscheint stattdessen ein Menü mit
+  den Fenstertiteln.
+- Ein kleiner Strich in der Akzentfarbe markiert laufende Programme.
+- Nach dem Start hüpft das Symbol kurz.
+
+Einträge hinzufügen und ändern
+------------------------------
+- Programme, Verknüpfungen, Dateien und Ordner aus dem Explorer ins Dock ziehen.
+  Eine blaue Linie zeigt, wo der Eintrag landet.
+- Dateien auf die Mitte eines Programms ziehen: Das Programm öffnet die Dateien.
+- Rechtsklick ins Dock:
+    Eigenschaften …          Name, Ziel, Parameter, Fenster, Symbol
+    Aus dem Dock entfernen
+    Programm oder Datei hinzufügen …
+    Ordnermenü hinzufügen …  Ordner als aufklappbares Menü (Ersatz für KkMenu)
+    Trennlinie einfügen
+- Reihenfolge ändern: Symbol mit der Maus an die neue Stelle ziehen
+  (nicht, wenn "Einträge sperren" eingeschaltet ist).
+
+Ordnermenüs
+-----------
+Ein Ordnermenü zeigt den Inhalt eines Ordners als Menü: Verknüpfungen ohne
+Endung, Unterordner als Untermenüs, sortiert wie in den Eigenschaften des Ordnermenüs eingestellt: Name (A–Z),
+Name (Z–A), neueste oder älteste zuerst, eigene Reihenfolge – auf Wunsch die
+Unterordner zuerst. Eigene Reihenfolge: im offenen Menü einen Eintrag mit der
+Maus an die gewünschte Stelle ziehen (geht auch in Untermenüs). Ist
+"Einträge sperren" eingeschaltet, ist auch das Verschieben im Menü gesperrt. Dock Pilot merkt sich die Reihenfolge, am Ordner ändert
+sich nichts; neue Verknüpfungen erscheinen danach nach Namen. Den Ordner selbst
+öffnet "Ordner öffnen" im Kontextmenü (Rechtsklick auf das Symbol). Neue
+Verknüpfungen einfach in den Ordner legen – sie erscheinen beim nächsten Öffnen.
+Ein offenes Ordnermenü klappt zu, wenn man woanders hinklickt, Esc drückt oder
+die Maus Menü und Dock eine Sekunde lang verlässt. Fährt man im Dock auf ein
+anderes Ordnermenü, wechselt es direkt dorthin.
+
+RocketDock übernehmen
+---------------------
+Beim ersten Start fragt Dock Pilot, ob die Einträge aus RocketDock übernommen
+werden sollen (sucht unter Programme (x86)\RocketDock\Settings.ini). Später:
+Einstellungen > "RocketDock übernehmen" oder Rechtsklick auf das Tray-Symbol.
+Übernommen werden alle Einträge, Trennlinien, Ordnermenüs (KkMenu), eigene
+Symbole (werden in den Datenordner kopiert), Größen, Position, automatisches
+Ausblenden und das Tastenkürzel. Danach RocketDock beenden und aus dem
+Autostart nehmen.
+
+Einstellungen
+-------------
+Klick auf das Tray-Symbol oder Rechtsklick ins Dock > Einstellungen. Änderungen
+gelten erst nach "Speichern".
+Die Seiten wählt man links in der Navigation. ☰ klappt sie ein und aus, die
+Stecknadel pinnt sie an (angepinnt bleibt sie offen, sonst klappt sie nach der
+Auswahl wieder ein).
+- Position: Bildschirm, Rand (oben, unten, links, rechts), Abstand, Zentrierung
+  (-100 % bis 100 %), immer im Vordergrund oder Fenster dürfen das Dock
+  überdecken (dann holt die Maus es auf Wunsch nach vorne)
+- Symbole: Größe, Abstand zwischen den Symbolen, laufende Programme
+  markieren, Fenstervorschau, Spiegelung; Leiste anzeigen (aus = nur Symbole), Deckkraft und
+  Eckenradius der Leiste
+- Zoom: Zoom-Effekt (automatisch, Blase, weiche Blase, fest, anheben,
+  leuchten, Fokus, federn, aus), Größe unter der Maus, wie viele Nachbarn
+  mitwachsen. Bei Blase "Leiste bleibt gleich breit": Die übrigen Symbole
+  machen Platz, indem sie schrumpfen oder sich überlappen (mindestens so groß
+  bzw. so weit sichtbar wie eingestellt). "Reserve an den Enden" macht die
+  Leiste etwas länger, die Blase nutzt zuerst diesen Platz. "Am Ende
+  hinauswachsen": am ersten und letzten Symbol wächst die Leiste dort etwas
+  hinaus.
+- Beschriftung: ein/aus, Schriftart (Standard: Schrift von Windows), Schriftgröße, fett, Farbe (weiß, schwarz, wie
+  Windows, Akzentfarbe oder eigene Farbe), Stärke und Größe des Schattens
+- Verhalten: automatisch ausblenden (mit Verzögerung), bei Vollbild ausblenden
+  (Spiele, Videos), laufende Programme nach vorne holen, Einträge sperren,
+  Animationen (aus, schnell, normal, langsam), Tastenkürzel zum Ein- und
+  Ausblenden
+- Allgemein: mit Windows starten, RocketDock übernehmen, Datenordner öffnen,
+  Dock und Einstellungen in eine Datei sichern (*.dockpilot) und
+  wiederherstellen, z. B. für einen zweiten PC. Beim Wiederherstellen bleiben
+  die bisherigen Dateien als ".vor-import" im Datenordner liegen.
+
+Passen nicht alle Symbole auf den Bildschirm, verkleinert Dock Pilot sie
+automatisch.
+
+Daten
+-----
+%LOCALAPPDATA%\Dock Pilot
+  Dock Pilot.ini   Einstellungen
+  Dock.ini         Einträge (ein Abschnitt je Eintrag, lässt sich auch von Hand
+                   bearbeiten, solange Dock Pilot beendet ist)
+  Symbole\         übernommene eigene Symbole
+  Fehler.log       technische Details bei Fehlern
+
+Updates
+-------
+Dock Pilot sieht beim Start auf GitHub nach einer neuen Version (höchstens alle
+20 Stunden, abschaltbar im Info-Fenster).
+
+Autor: Günther Schoder · www.westmc002.de
