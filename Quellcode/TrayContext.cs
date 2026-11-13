@@ -42,6 +42,8 @@ namespace DockPilot
 
             Theme.Accent = Theme.SystemAccent;
             _settings = Settings.Load();
+            if (_settings.Profile.Length > 0 && !Directory.Exists(DockStore.DirectoryOf(_settings.Profile))) _settings.Profile = ""; // Profilordner fehlt
+            DockStore.Profile = _settings.Profile;
             _appIcon = LoadIcon(32);
             _trayIcon = LoadIcon(SystemInformation.SmallIconSize.Width);
             Autostart.UpdateMovedPath();
@@ -64,10 +66,14 @@ namespace DockPilot
             }
 
             _dock = new DockWindow(_settings, items);
+            _dock.Shared = _settings;
+            _dock.SharedChanged = delegate { SyncDocks(null); };
+            _dock.HotkeyPressed = delegate { foreach (DockWindow d in _extra) if (d != null) d.ToggleQuiet(); };
             _dock.OpenSettings = ShowSettings;
             _dock.ShowAbout = delegate { AboutDialog.ShowFor(VisibleForm); };
             _dock.ExitApp = ExitApp;
             _dock.Show();
+            SyncDocks(null);
 
             _tray = new NotifyIcon();
             _tray.Icon = _trayIcon;
@@ -89,7 +95,16 @@ namespace DockPilot
             _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSettingsEventName);
             _showWait = ThreadPool.RegisterWaitForSingleObject(_showEvent, delegate
             {
-                try { _invoker.BeginInvoke((MethodInvoker)ShowSettings); } catch { }
+                // zweiter Programmstart: nur das Dock einblenden (die Einstellungen öffnet das Tray-Symbol)
+                try
+                {
+                    _invoker.BeginInvoke((MethodInvoker)delegate
+                    {
+                        _dock.ShowNow();
+                        foreach (DockWindow d in _extra) if (d != null) d.ShowNow();
+                    });
+                }
+                catch { }
             }, null, -1, false);
 
             if (_settings.FirstRun)
@@ -138,6 +153,125 @@ namespace DockPilot
             };
             _updateTimer.Start();
             SystemEvents.UserPreferenceChanged += OnPreferenceChanged;
+        }
+
+        // ------------------------------------------------------------------ Weitere Docks und Profile
+
+        private readonly DockWindow[] _extra = new DockWindow[Settings.ExtraDocks]; // Dock 2 und 3, null = aus
+
+        /// <summary>
+        /// Weitere Docks anlegen, anpassen oder schließen – nach den gespeicherten Einstellungen oder (source != null)
+        /// nach der Vorschau aus dem Einstellungsfenster. Jedes hat eigene Einträge, Position und Symbolgröße.
+        /// </summary>
+        private void SyncDocks(Settings source)
+        {
+            Settings src = source ?? _settings;
+            for (int i = 0; i < Settings.ExtraDocks; i++)
+            {
+                int number = i + 2;
+                DockWindow d = _extra[i];
+                if (!src.Extra[i].Enabled)
+                {
+                    if (d != null) { _extra[i] = null; d.Close(); d.Dispose(); }
+                    continue;
+                }
+                Settings composed = src.ForDock(number);
+                if (d != null)
+                {
+                    d.UpdateSettings(composed);
+                    if (source != null) d.ShowNow(); // Vorschau: auch ein ausgeblendetes Dock kurz zeigen
+                    continue;
+                }
+                d = new DockWindow(composed, LoadItems(number));
+                d.Number = number;
+                d.Shared = _settings;
+                d.SharedChanged = delegate { _dock.ApplySettings(); SyncDocks(null); };
+                d.OpenSettings = ShowSettings;
+                d.ShowAbout = delegate { AboutDialog.ShowFor(VisibleForm); };
+                d.ExitApp = ExitApp;
+                _extra[i] = d;
+                d.Show();
+                if (source != null) d.ShowNow(); // gerade eingeschaltet: zeigen, auch bei „Automatisch ausblenden“
+            }
+        }
+
+        /// <summary>Einträge eines Docks im aktiven Profil. Ein neues weiteres Dock bekommt einen ersten Eintrag – ein leeres wäre unsichtbar.</summary>
+        private static List<DockItem> LoadItems(int number)
+        {
+            List<DockItem> items = DockStore.Load(number);
+            if (items.Count == 0 && !DockStore.ExistsFor(number))
+            {
+                if (number == 1) items = DefaultItems();
+                else items.Add(new DockItem { Title = "Explorer", Command = "explorer.exe", Icon = Environment.ExpandEnvironmentVariables(@"%SystemRoot%\explorer.exe") });
+                DockStore.Save(items, number);
+            }
+            return items;
+        }
+
+        /// <summary>Alle Docks zeigen die Einträge des aktiven Profils.</summary>
+        private void ReloadAllItems()
+        {
+            _dock.SetItems(LoadItems(1));
+            for (int i = 0; i < _extra.Length; i++)
+                if (_extra[i] != null) _extra[i].SetItems(LoadItems(i + 2));
+        }
+
+        private static string ProfileLabel(string profile)
+        {
+            return string.IsNullOrEmpty(profile) ? "Standard" : profile;
+        }
+
+        /// <summary>Profil wechseln: wie ein anderer Desktop – andere Einträge in allen Docks, gleiche Einstellungen.</summary>
+        private void SwitchProfile(string profile)
+        {
+            if (string.Equals(profile, _settings.Profile, StringComparison.OrdinalIgnoreCase)) return;
+            _settings.Profile = profile;
+            _settings.Save();
+            DockStore.Profile = profile;
+            ReloadAllItems();
+        }
+
+        /// <summary>Neues Profil: beginnt mit den Einträgen des aktuellen und wird gleich aktiv.</summary>
+        private void NewProfile()
+        {
+            string name = InputDialog.Ask("Neues Profil", "Name des Profils (z. B. Arbeit oder Privat):", "", delegate (string text)
+            {
+                string clean = Settings.CleanProfile(text);
+                if (clean.Length == 0 || clean != text) return "Der Name enthält unzulässige Zeichen.";
+                if (clean.Equals("Standard", StringComparison.OrdinalIgnoreCase) || Directory.Exists(DockStore.DirectoryOf(clean)))
+                    return "Ein Profil mit diesem Namen gibt es schon.";
+                return null;
+            });
+            if (name == null) return;
+            try
+            {
+                string dir = DockStore.DirectoryOf(name);
+                Directory.CreateDirectory(dir);
+                for (int n = 1; n <= Settings.ExtraDocks + 1; n++)
+                {
+                    string from = DockStore.FileFor(n);
+                    if (File.Exists(from)) File.Copy(from, Path.Combine(dir, Path.GetFileName(from)), true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Das Profil konnte nicht angelegt werden.\n\n" + ex.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            SwitchProfile(name);
+        }
+
+        /// <summary>Aktives Profil löschen (nicht das Standardprofil): Die Docks wechseln auf Standard, der Ordner kommt in den Papierkorb.</summary>
+        private void DeleteProfile()
+        {
+            string profile = _settings.Profile;
+            if (string.IsNullOrEmpty(profile)) return;
+            if (MessageBox.Show("Das Profil „" + profile + "“ mit seinen Einträgen löschen?\n\nDie Docks zeigen danach wieder das Profil „Standard“.",
+                    AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            string dir = DockStore.DirectoryOf(profile);
+            SwitchProfile("");
+            if (Directory.Exists(dir) && !DockNative.Recycle(dir))
+                MessageBox.Show("Der Ordner des Profils konnte nicht gelöscht werden:\n" + dir, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private Form VisibleForm
@@ -249,10 +383,12 @@ namespace DockPilot
             loaded.FirstRun = false;
             loaded.NavPinned = navPinned;
             loaded.LastUpdateCheck = lastCheck;
+            loaded.Profile = _settings.Profile; // das aktive Profil dieses PCs bleibt
             _settings.CopyFrom(loaded);
             _settings.Save();
-            _dock.SetItems(DockStore.Load());
             _dock.ApplySettings();
+            SyncDocks(null);
+            ReloadAllItems();
             return true;
         }
 
@@ -309,6 +445,7 @@ namespace DockPilot
                 _settings.AutoHide = !_settings.AutoHide;
                 _settings.Save();
                 _dock.ApplySettings();
+                SyncDocks(null);
             });
             MenuBuilder.MakeToggle(hide, _settings.AutoHide);
             items.Add(hide);
@@ -317,9 +454,29 @@ namespace DockPilot
             {
                 _settings.Locked = !_settings.Locked;
                 _settings.Save();
+                SyncDocks(null);
             });
             MenuBuilder.MakeToggle(lockItem, _settings.Locked);
             items.Add(lockItem);
+
+            // Profile: andere Einträge in allen Docks, gleiche Einstellungen
+            items.Add(mb.Submenu("Profil: " + ProfileLabel(_settings.Profile).Replace("&", "&&"), '\uE77B', delegate (ToolStripItemCollection sub)
+            {
+                List<string> names = DockStore.Profiles();
+                names.Insert(0, "");
+                foreach (string n in names)
+                {
+                    string profile = n;
+                    GlyphMenuItem entry = mb.Item(ProfileLabel(profile).Replace("&", "&&"), '\0', delegate { SwitchProfile(profile); });
+                    MenuBuilder.MakeToggle(entry, string.Equals(profile, _settings.Profile, StringComparison.OrdinalIgnoreCase));
+                    sub.Add(entry);
+                }
+                sub.Add(new ToolStripSeparator());
+                sub.Add(mb.Item("Neues Profil …", '\uE710', delegate { NewProfile(); }));
+                GlyphMenuItem del = mb.Item("Dieses Profil löschen …", '\uE74D', delegate { DeleteProfile(); });
+                del.Enabled = _settings.Profile.Length > 0;
+                sub.Add(del);
+            }));
 
             bool autoOn = Autostart.IsEnabled;
             GlyphMenuItem auto = mb.Item("Mit Windows starten", MenuHelper.Startup, delegate
@@ -357,7 +514,15 @@ namespace DockPilot
                 _form.TestHotkey = _dock.TestHotkey;
                 _form.ImportRocketDock = ImportInteractive;
                 _form.ImportBackup = ImportBackup;
-                _form.Saved += delegate { _dock.ApplySettings(); };
+                _form.Saved += delegate { _dock.ApplySettings(); SyncDocks(null); };
+                // Änderungen wirken sofort an allen Docks, gespeichert wird erst mit „Speichern“
+                _form.Live = delegate (Settings preview)
+                {
+                    _dock.UsePreview(preview);
+                    if (preview != null) _dock.ShowNow(); // bei „Automatisch ausblenden“ die Änderung kurz zeigen
+                    SyncDocks(preview);
+                };
+                _form.SetPreviewItems(_dock.Items);     // Beispiel-Dock auf der Seite „Effekte“
                 _form.FormClosed += delegate { _form = null; };
                 _form.Show();
             }
@@ -378,6 +543,7 @@ namespace DockPilot
             _tray.Visible = false;
             _showWait.Unregister(null);
             SystemEvents.UserPreferenceChanged -= OnPreferenceChanged;
+            foreach (DockWindow d in _extra) if (d != null) { d.Close(); d.Dispose(); }
             _dock.Close();
             _dock.Dispose();
             ExitThread();

@@ -165,6 +165,29 @@ namespace DockPilot
             return item;
         }
 
+        /// <summary>Eintrag mit Untermenü, das erst beim Aufklappen gefüllt wird.</summary>
+        public GlyphMenuItem Submenu(string text, char glyph, Action<ToolStripItemCollection> fill)
+        {
+            GlyphMenuItem item = Item(text, glyph, null);
+            item.DropDownItems.Add(new ToolStripMenuItem("…"));
+            ToolStripDropDownMenu dd = (ToolStripDropDownMenu)item.DropDown;
+            Style(dd);
+            dd.Opened += delegate { MenuHelper.RoundCorners(dd); };
+            bool filled = false;
+            item.DropDownOpening += delegate
+            {
+                if (filled) return;
+                filled = true;
+                dd.SuspendLayout();
+                item.DropDownItems.Clear();
+                dd.Items.Add(new MenuSpacer((int)Math.Round(2 * Scale)));
+                fill(dd.Items);
+                dd.Items.Add(new MenuSpacer((int)(6 * Scale)));
+                dd.ResumeLayout();
+            };
+            return item;
+        }
+
         /// <summary>Schalter rechts im Menüeintrag statt Haken.</summary>
         public static void MakeToggle(GlyphMenuItem item, bool on)
         {
@@ -256,7 +279,13 @@ namespace DockPilot
                 }
                 else
                 {
-                    item.Click += delegate { if (!_reorderSuppress) Shell.Open(path, "", folder); };
+                    item.Click += delegate
+                    {
+                        if (_reorderSuppress) return;
+                        // Strg + Klick markiert (mehrere Einträge auf einmal herausziehen) statt zu starten
+                        if (Control.ModifierKeys == Keys.Control && Sorting != null && AllowReorder) { ToggleMark(item); return; }
+                        Shell.Open(path, "", folder);
+                    };
                 }
                 items.Add(item);
             }
@@ -335,11 +364,109 @@ namespace DockPilot
 
         // Ziehen im Menü: Eintrag an eine andere Stelle verschieben
         private static bool _reorderSuppress;   // nach dem Ziehen: kein Start und kein Schließen durch das Loslassen
+        private static DragGhost _ghost;        // schwebendes Symbol beim Herausziehen
+
+        /// <summary>Gerade wird ein Eintrag gezogen (das Menü soll dabei nicht von selbst zuklappen).</summary>
+        public static bool DragActive;
+
+        /// <summary>Herausziehen: wird laufend gefragt, ob die Maus über dem Dock ist (dort landet der Eintrag im Dock).</summary>
+        public Func<bool> DragOver;
+
+        /// <summary>
+        /// Herausziehen beendet: Pfade der losgelassenen Einträge, null = abgebrochen.
+        /// Rückgabe true: Sie sind im Dock gelandet.
+        /// </summary>
+        public Func<List<string>, bool> DragDrop;
+
+        /// <summary>Dateien wurden aus dem Ordner entfernt (Pfad und Inhalt, für „Entfernen rückgängig“).</summary>
+        public Action<List<KeyValuePair<string, byte[]>>> Removed;
+
+        // mit Strg + Klick markierte Einträge: werden gemeinsam herausgezogen
+        private readonly HashSet<ToolStripItem> _marked = new HashSet<ToolStripItem>();
+
+        private void ToggleMark(ToolStripItem item)
+        {
+            if (!_marked.Remove(item)) _marked.Add(item);
+            if (item.Owner != null) item.Owner.Invalidate();
+        }
+
+        /// <summary>Was gezogen wird: alle markierten Einträge dieses Menüs, wenn der angefasste dazugehört, sonst nur er.</summary>
+        private List<ToolStripItem> Dragged(ToolStrip strip, ToolStripItem item)
+        {
+            List<ToolStripItem> list = new List<ToolStripItem>();
+            if (_marked.Contains(item))
+                foreach (ToolStripItem it in strip.Items)
+                    if (_marked.Contains(it)) list.Add(it);
+            if (list.Count == 0) list.Add(item);
+            return list;
+        }
+
+        /// <summary>Symbol des Eintrags an der Maus; remove: mit rotem Entfernen-Zeichen.</summary>
+        private static void ShowGhost(ToolStripItem item, float scale, bool remove, int count)
+        {
+            int size = Math.Max(16, (int)Math.Round(32 * scale));
+            int badge = Math.Max(14, (int)Math.Round(18 * scale));
+            int w = size + badge / 2 + (int)(4 * scale);
+            using (Bitmap img = new Bitmap(w, w, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(img))
+                {
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    Image src = item.Image;
+                    if (src != null)
+                        using (System.Drawing.Imaging.ImageAttributes ia = new System.Drawing.Imaging.ImageAttributes())
+                        {
+                            System.Drawing.Imaging.ColorMatrix cm = new System.Drawing.Imaging.ColorMatrix();
+                            cm.Matrix33 = 0.8f;
+                            ia.SetColorMatrix(cm);
+                            g.DrawImage(src, new Rectangle(0, 0, size, size), 0, 0, src.Width, src.Height, GraphicsUnit.Pixel, ia);
+                        }
+                    if (remove)
+                    {
+                        Rectangle br = new Rectangle(w - badge - 1, w - badge - 1, badge, badge);
+                        using (SolidBrush b = new SolidBrush(Color.FromArgb(196, 43, 28))) g.FillEllipse(b, br);
+                        using (Pen pen = new Pen(Color.White, Math.Max(1.5f, 2 * scale)))
+                        {
+                            float k = badge * 0.28f;
+                            float cx = br.X + badge / 2f, cy = br.Y + badge / 2f;
+                            g.DrawLine(pen, cx - k, cy - k, cx + k, cy + k);
+                            g.DrawLine(pen, cx - k, cy + k, cx + k, cy - k);
+                        }
+                    }
+                    if (count > 1)
+                    {
+                        // Anzahl oben rechts
+                        Rectangle cr = new Rectangle(w - badge - 1, 0, badge, badge);
+                        using (SolidBrush b = new SolidBrush(Color.FromArgb(0, 103, 192))) g.FillEllipse(b, cr);
+                        using (Font f = new Font("Segoe UI", Math.Max(6f, badge * 0.55f), FontStyle.Bold, GraphicsUnit.Pixel))
+                        using (StringFormat sf = new StringFormat())
+                        {
+                            sf.Alignment = StringAlignment.Center;
+                            sf.LineAlignment = StringAlignment.Center;
+                            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                            g.DrawString(count > 9 ? "9+" : count.ToString(), f, Brushes.White, cr, sf);
+                        }
+                    }
+                }
+                if (_ghost == null || _ghost.IsDisposed) _ghost = new DragGhost();
+                Point c = Cursor.Position;
+                _ghost.Show(img, new Point(c.X + (w - size) / 2, c.Y + (w - size) / 2));
+            }
+        }
+
+        private static void HideGhost()
+        {
+            if (_ghost != null && !_ghost.IsDisposed && _ghost.Visible) _ghost.Hide();
+        }
 
         /// <summary>
         /// Einträge eines Ordnermenüs (bzw. Untermenüs) per Ziehen mit der Maus verschieben. Die neue Reihenfolge wird
         /// über Sorting gespeichert, die Sortierung wechselt auf „Eigene Reihenfolge“. Nur Dateien und Unterordner,
         /// keine Trennlinien oder „Ordner öffnen“.
+        /// Aus dem Menü herausgezogen: Der Eintrag wird aus dem Ordner entfernt (Papierkorb) oder, über dem Dock
+        /// losgelassen, dort eingefügt (DragOver/DragDrop) – siehe TakeOut. Mit Strg + Klick markierte Einträge
+        /// werden gemeinsam gezogen.
         /// </summary>
         public void EnableReorder(ToolStripDropDown strip, string folder)
         {
@@ -350,12 +477,23 @@ namespace DockPilot
             Point downPt = Point.Empty;
             bool dragging = false;
             int insertAt = -1; // Index in strip.Items, vor dem eingefügt wird
+            bool outside = false; // aus dem Menü herausgezogen
             MenuTheme colors = Colors;
             float scale = Scale;
             Timer track = new Timer { Interval = 15 };
             bool wasDown = true; // erst ein neues Drücken zählt (nicht das Loslassen nach dem Öffnen)
             strip.Opened += delegate { wasDown = true; track.Start(); };
-            strip.Closed += delegate { track.Stop(); down = null; dragging = false; };
+            strip.Closed += delegate
+            {
+                track.Stop();
+                if (dragging)
+                {
+                    DragActive = false;
+                    HideGhost();
+                    if (outside && DragDrop != null) DragDrop(null);
+                }
+                down = null; dragging = false; outside = false;
+            };
 
             track.Tick += delegate
             {
@@ -387,7 +525,26 @@ namespace DockPilot
                         Size drag = SystemInformation.DragSize;
                         if (Math.Abs(cur.Y - downPt.Y) < drag.Height * 2 && Math.Abs(cur.X - downPt.X) < drag.Width * 2) return;
                         dragging = true;
+                        DragActive = true;
                         _reorderSuppress = true; // Loslassen startet nichts und schließt das Menü nicht
+                    }
+                    // deutlich neben dem Menü: herausziehen
+                    Rectangle near = strip.Bounds;
+                    near.Inflate((int)(24 * scale), (int)(24 * scale));
+                    bool isOut = !near.Contains(cur) && Exists(down.Tag as string);
+                    if (isOut)
+                    {
+                        bool dock = DragOver != null && DragOver();
+                        ShowGhost(down, scale, !dock, Dragged(strip, down).Count); // folgt der Maus
+                        outside = true;
+                        if (insertAt != -1) { insertAt = -1; strip.Invalidate(); }
+                        return;
+                    }
+                    if (outside)
+                    {
+                        outside = false;
+                        HideGhost();
+                        if (DragDrop != null) DragDrop(null);
                     }
                     int at = InsertIndex(strip, strip.PointToClient(cur));
                     if (at != insertAt) { insertAt = at; strip.Invalidate(); }
@@ -396,13 +553,20 @@ namespace DockPilot
                 // losgelassen
                 ToolStripItem moved = down;
                 int target = insertAt;
-                bool wasDragging = dragging;
+                bool wasDragging = dragging, wasOutside = outside;
                 down = null;
                 dragging = false;
+                outside = false;
                 insertAt = -1;
                 strip.Invalidate();
                 if (!wasDragging) return;
-                try { MoveItem(strip, moved, target, folder); }
+                DragActive = false;
+                HideGhost();
+                try
+                {
+                    if (wasOutside) TakeOut(strip, Dragged(strip, moved));
+                    else MoveItem(strip, moved, target, folder);
+                }
                 finally
                 {
                     // Das Loslassen (Klick) kann noch in der Warteschlange stehen – erst kurz danach wieder normal klicken lassen
@@ -417,14 +581,82 @@ namespace DockPilot
                 // nach dem Ziehen nicht schließen (Loslassen über einem Eintrag gilt sonst als Klick)
                 if ((_reorderSuppress || dragging) && e.CloseReason != ToolStripDropDownCloseReason.Keyboard
                     && e.CloseReason != ToolStripDropDownCloseReason.CloseCalled) e.Cancel = true;
+                // Strg + Klick markiert nur: Menü bleibt offen
+                if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked && Control.ModifierKeys == Keys.Control) e.Cancel = true;
+            };
+            strip.Closed += delegate
+            {
+                // Markierungen dieses Menüs gelten nur, solange es offen ist
+                foreach (ToolStripItem it in strip.Items) _marked.Remove(it);
             };
             strip.Paint += delegate (object s, PaintEventArgs e)
             {
+                // markierte Einträge (Strg + Klick): Rahmen in der Akzentfarbe
+                if (_marked.Count > 0)
+                    foreach (ToolStripItem it in strip.Items)
+                    {
+                        if (!_marked.Contains(it)) continue;
+                        Rectangle b = it.Bounds;
+                        b.Inflate(-(int)(5 * scale), -1);
+                        using (SolidBrush markFill = new SolidBrush(Color.FromArgb(40, colors.Accent))) e.Graphics.FillRectangle(markFill, b);
+                        using (Pen markPen = new Pen(colors.Accent, Math.Max(1f, scale))) e.Graphics.DrawRectangle(markPen, b.X, b.Y, b.Width - 1, b.Height - 1);
+                    }
                 if (!dragging || insertAt < 0) return;
                 int y = LineY(strip, insertAt);
                 using (Pen pen = new Pen(colors.Accent, Math.Max(2f, 2f * scale)))
                     e.Graphics.DrawLine(pen, (int)(10 * scale), y, strip.Width - (int)(10 * scale), y);
             };
+        }
+
+        private static bool FileExists(string path)
+        {
+            try { return path != null && File.Exists(path); } catch { return false; }
+        }
+
+        private static bool Exists(string path)
+        {
+            try { return path != null && (File.Exists(path) || Directory.Exists(path)); } catch { return false; }
+        }
+
+        /// <summary>
+        /// Herausgezogen und losgelassen.
+        /// Über dem Dock: Die Einträge werden dort eingefügt (DragDrop). Verknüpfungen wandern dabei aus dem Ordner in den
+        /// Papierkorb (der Dock-Eintrag zeigt auf ihr Ziel); echte Dateien und Unterordner bleiben liegen, weil der
+        /// Dock-Eintrag auf sie selbst zeigt.
+        /// Woanders: Die Einträge kommen in den Papierkorb – Unterordner erst nach Rückfrage. Kleine Dateien
+        /// (Verknüpfungen) werden vorher gemerkt, damit „Entfernen rückgängig“ sie zurücklegen kann (Removed).
+        /// </summary>
+        private void TakeOut(ToolStrip strip, List<ToolStripItem> moved)
+        {
+            List<string> paths = new List<string>();
+            foreach (ToolStripItem it in moved) paths.Add((string)it.Tag);
+            bool onDock = DragDrop != null && DragDrop(paths);
+            List<KeyValuePair<string, byte[]>> removed = new List<KeyValuePair<string, byte[]>>();
+            foreach (ToolStripItem it in moved)
+            {
+                string path = (string)it.Tag;
+                bool dir = !FileExists(path);
+                if (onDock)
+                {
+                    if (dir || !path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)) continue; // bleibt im Ordner
+                }
+                else if (dir)
+                {
+                    if (MessageBox.Show("Den Ordner „" + DisplayName(path) + "“ mit seinem ganzen Inhalt in den Papierkorb legen?",
+                            AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                        continue;
+                }
+                byte[] content = null;
+                if (!dir && !onDock)
+                {
+                    try { if (new FileInfo(path).Length <= 1024 * 1024) content = File.ReadAllBytes(path); } catch { }
+                }
+                if (!DockNative.Recycle(path) || Exists(path)) continue; // nicht entfernt (z. B. schreibgeschützter Ordner)
+                _marked.Remove(it);
+                try { if (!strip.IsDisposed) strip.Items.Remove(it); } catch { }
+                if (content != null) removed.Add(new KeyValuePair<string, byte[]>(path, content));
+            }
+            if (removed.Count > 0 && Removed != null) Removed(removed);
         }
 
         /// <summary>Einfügestelle unter der Maus: vor dem Eintrag, dessen obere Hälfte getroffen ist, sonst dahinter.</summary>
@@ -619,6 +851,113 @@ namespace DockPilot
             foreach (string n in names) Entries.Add(rel.Length == 0 ? n : rel + "\\" + n);
             Mode = 4;
             if (Changed != null) Changed(string.Join("|", Entries.ToArray()));
+        }
+    }
+
+    /// <summary>
+    /// Tippen im offenen Ordnermenü: springt zum Eintrag, der mit den getippten Buchstaben beginnt (sonst: sie enthält).
+    /// Mehrere Buchstaben kurz nacheinander verfeinern die Suche, derselbe Buchstabe mehrmals blättert durch die Treffer.
+    /// Der Eintrag wird nur markiert – Enter startet ihn. Gesucht wird im zuletzt aufgeklappten Untermenü.
+    /// Als Nachrichtenfilter, weil Menüs Tastendrücke sonst als Tastenkürzel deuten und den Eintrag sofort starten.
+    /// </summary>
+    internal sealed class MenuTypeAhead : IMessageFilter
+    {
+        private const int WM_CHAR = 0x0102;
+        private static readonly MethodInfo ChangeSelection = typeof(ToolStrip).GetMethod("ChangeSelection",
+            BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(ToolStripItem) }, null);
+
+        private readonly ToolStripDropDown _root;
+        private string _typed = "";
+        private DateTime _last = DateTime.MinValue;
+
+        public MenuTypeAhead(ToolStripDropDown root)
+        {
+            _root = root;
+        }
+
+        public bool PreFilterMessage(ref Message m)
+        {
+            if (m.Msg != WM_CHAR || _root.IsDisposed || !_root.Visible) return false;
+            char c = char.ToLower((char)(m.WParam.ToInt64() & 0xFFFF));
+            if (char.IsControl(c)) return false; // Enter, Esc usw. wie gewohnt
+            DateTime now = DateTime.Now;
+            bool fresh = _typed.Length == 0 || (now - _last).TotalMilliseconds > 1000;
+            if (c == ' ' && fresh) return false;
+            _last = now;
+
+            ToolStripDropDown dd = Deepest(_root);
+            List<ToolStripItem> entries = new List<ToolStripItem>();
+            int selected = -1;
+            foreach (ToolStripItem it in dd.Items)
+            {
+                if (!(it.Tag is string) || !it.Visible) continue;
+                if (it.Selected) selected = entries.Count;
+                entries.Add(it);
+            }
+            if (entries.Count == 0) return true;
+
+            ToolStripItem hit = null;
+            bool sameLetter = !fresh && _typed.Trim(c).Length == 0;
+            if (sameLetter)
+            {
+                // derselbe Buchstabe noch einmal: nächster Eintrag mit diesem Anfangsbuchstaben
+                _typed = c.ToString();
+                for (int k = 1; k <= entries.Count && hit == null; k++)
+                {
+                    ToolStripItem it = entries[(Math.Max(selected, -1) + k + entries.Count) % entries.Count];
+                    if (Name(it).StartsWith(_typed, StringComparison.CurrentCultureIgnoreCase)) hit = it;
+                }
+            }
+            else
+            {
+                string text = fresh ? c.ToString() : _typed + c;
+                hit = Find(entries, text);
+                if (hit == null && !fresh)
+                {
+                    // passt nicht mehr: mit diesem Buchstaben neu anfangen
+                    text = c.ToString();
+                    hit = Find(entries, text);
+                }
+                _typed = text;
+            }
+            if (hit != null) Select(dd, hit);
+            return true;
+        }
+
+        private static string Name(ToolStripItem item)
+        {
+            return MenuBuilder.DisplayName((string)item.Tag);
+        }
+
+        private static ToolStripItem Find(List<ToolStripItem> entries, string text)
+        {
+            foreach (ToolStripItem it in entries)
+                if (Name(it).StartsWith(text, StringComparison.CurrentCultureIgnoreCase)) return it;
+            foreach (ToolStripItem it in entries)
+                if (Name(it).IndexOf(text, StringComparison.CurrentCultureIgnoreCase) >= 0) return it;
+            return null;
+        }
+
+        /// <summary>Das zuletzt aufgeklappte Untermenü (sonst das Menü selbst).</summary>
+        private static ToolStripDropDown Deepest(ToolStripDropDown dd)
+        {
+            foreach (ToolStripItem it in dd.Items)
+            {
+                ToolStripDropDownItem di = it as ToolStripDropDownItem;
+                if (di != null && di.HasDropDownItems && di.DropDown.Visible) return Deepest(di.DropDown);
+            }
+            return dd;
+        }
+
+        /// <summary>Eintrag markieren und in langen Menüs in den sichtbaren Bereich holen.</summary>
+        private static void Select(ToolStripDropDown dd, ToolStripItem item)
+        {
+            try
+            {
+                if (ChangeSelection != null) { ChangeSelection.Invoke(dd, new object[] { item }); return; }
+            }
+            catch { }
+            item.Select();
         }
     }
 

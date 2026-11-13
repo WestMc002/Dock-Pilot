@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -22,6 +23,7 @@ namespace DockPilot
             try
             {
                 if (!string.IsNullOrEmpty(item.Icon)) b = FromSpec(item.Icon, size);
+                if (b == null) b = FromPack(item, size);
                 if (b == null)
                 {
                     string target = Expand(item.Kind == ItemKind.Ordnermenue ? item.Folder : item.Command);
@@ -30,6 +32,37 @@ namespace DockPilot
             }
             catch { b = null; }
             return b ?? Placeholder(size);
+        }
+
+        /// <summary>
+        /// Eigene Symbole: Liegt im Ordner „Symbole“ (Datenordner) ein Bild, das wie der Eintrag oder wie sein Programm
+        /// heißt (z. B. „Editor.png“ oder „notepad.ico“), wird es statt des Programmsymbols verwendet.
+        /// Ein in den Eigenschaften gewähltes Symbol hat Vorrang.
+        /// </summary>
+        private static Bitmap FromPack(DockItem item, int size)
+        {
+            try
+            {
+                string dir = Settings.IconDirectory;
+                if (item.IsSeparator || !Directory.Exists(dir)) return null;
+                List<string> names = new List<string>();
+                names.Add(item.Title);
+                string target = Expand(item.Kind == ItemKind.Ordnermenue ? item.Folder : item.Command).TrimEnd('\\');
+                try { names.Add(Path.GetFileNameWithoutExtension(target)); } catch { }
+                foreach (string name in names)
+                {
+                    if (string.IsNullOrEmpty(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) continue;
+                    foreach (string ext in new[] { ".png", ".ico" })
+                    {
+                        string file = Path.Combine(dir, name + ext);
+                        if (!File.Exists(file)) continue;
+                        Bitmap b = FromSpec(file, size);
+                        if (b != null) return b;
+                    }
+                }
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>Kleines Symbol für Menüeinträge (Datei, Verknüpfung oder Ordner).</summary>

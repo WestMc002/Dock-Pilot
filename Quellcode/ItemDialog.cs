@@ -17,6 +17,9 @@ namespace DockPilot
         private readonly DockItem _item;
         private readonly float _sc;
         public DockItem Result { get { return _item; } }
+        /// <summary>Prüft, ob ein Tastenkürzel frei ist (vom Dock gesetzt).</summary>
+        public Func<int, int, bool> TestHotkey;
+        private ComboHotkeyBox _hotkey;
 
         private ChoiceBox _kind, _window, _sort;
         private ToggleSwitch _foldersFirst;
@@ -47,7 +50,7 @@ namespace DockPilot
             TopMost = true;
             KeyPreview = true;
             Font = Theme.UiFont(13.5f * _sc, FontStyle.Regular);
-            ClientSize = new Size(S(560), S(526));
+            ClientSize = new Size(S(560), S(570));
             BuildUi();
             LoadValues();
             ApplyTheme();
@@ -60,7 +63,7 @@ namespace DockPilot
         {
             _card = new Card();
             _card.UiScale = _sc;
-            _card.Bounds = new Rectangle(S(24), S(24), S(512), S(420));
+            _card.Bounds = new Rectangle(S(24), S(24), S(512), S(464));
             Controls.Add(_card);
 
             int x = S(150), w = S(512) - S(150) - S(18);
@@ -118,26 +121,34 @@ namespace DockPilot
             _card.Controls.Add(_sortHint);
             _menuRows = new Control[] { lf, _folder, browseFolder, ls, _sort, _sortHint, lff, _foldersFirst, lfo, _filesOnly };
 
+            // eigenes Tastenkürzel (für beide Arten)
+            _hotkey = new ComboHotkeyBox();
+            _hotkey.Size = new Size(S(200), S(32));
+            Row("Tastenkürzel", _hotkey, x, S(316), S(200));
+            Label hotkeyHint = MakeLabel("gilt systemweit", true); // kurz: daneben ist nur wenig Platz
+            hotkeyHint.Location = new Point(x + S(212), S(316) + (S(32) - hotkeyHint.PreferredHeight) / 2);
+            _card.Controls.Add(hotkeyHint);
+
             // Symbol
             _iconBox = new PictureBox();
             _iconBox.SizeMode = PictureBoxSizeMode.Zoom;
-            _iconBox.Bounds = new Rectangle(x, S(320), S(64), S(64));
+            _iconBox.Bounds = new Rectangle(x, S(364), S(64), S(64));
             _card.Controls.Add(_iconBox);
             Label li = MakeLabel("Symbol", false);
-            li.Location = new Point(S(18), S(320) + (S(64) - li.PreferredHeight) / 2);
+            li.Location = new Point(S(18), S(364) + (S(64) - li.PreferredHeight) / 2);
             _card.Controls.Add(li);
             ModernButton change = new ModernButton();
             change.Text = "Ändern …";
-            change.Bounds = new Rectangle(x + S(80), S(320), S(124), S(32));
+            change.Bounds = new Rectangle(x + S(80), S(364), S(124), S(32));
             change.Click += delegate { ChangeIcon(change); };
             _card.Controls.Add(change);
             ModernButton reset = new ModernButton();
             reset.Text = "Standard";
-            reset.Bounds = new Rectangle(x + S(80) + S(132), S(320), S(110), S(32));
+            reset.Bounds = new Rectangle(x + S(80) + S(132), S(364), S(110), S(32));
             reset.Click += delegate { _icon = ""; UpdatePreview(); };
             _card.Controls.Add(reset);
             Label hint = MakeLabel("Standard = Symbol des Ziels", true);
-            hint.Location = new Point(x + S(80), S(360));
+            hint.Location = new Point(x + S(80), S(404));
             _card.Controls.Add(hint);
 
             _kind.SelectionChanged += delegate { UpdateKind(); UpdatePreview(); };
@@ -145,7 +156,7 @@ namespace DockPilot
             _folder.Leave += delegate { UpdatePreview(); };
 
             // Knöpfe: "Abbrechen" links, "Speichern" rechts, links davon die Fehlerzeile
-            int by = S(468);
+            int by = S(512);
             _btnSave = new ModernButton();
             _btnSave.Text = "Speichern";
             _btnSave.Primary = true;
@@ -235,6 +246,7 @@ namespace DockPilot
             _sort.SelectedIndex = _item.Sort;
             _foldersFirst.Checked = _item.FoldersFirst;
             _filesOnly.Checked = _item.FilesOnly;
+            _hotkey.SetHotkey(_item.HotkeyModifiers, _item.HotkeyKey);
             UpdateKind();
             UpdatePreview();
         }
@@ -261,6 +273,8 @@ namespace DockPilot
             it.Sort = Math.Max(0, _sort.SelectedIndex);
             it.FilesOnly = _filesOnly.Checked;
             it.Icon = _icon;
+            it.HotkeyModifiers = _hotkey.Key > 0 ? _hotkey.Modifiers : 0;
+            it.HotkeyKey = _hotkey.Key;
             return it;
         }
 
@@ -326,6 +340,13 @@ namespace DockPilot
             if (it.Title.Length == 0) { _error.Text = "Bitte einen Namen eingeben."; _name.Focus(); return; }
             if (it.Kind == ItemKind.Programm && it.Command.Length == 0) { _error.Text = "Bitte ein Ziel eingeben."; _target.Focus(); return; }
             if (it.Kind == ItemKind.Ordnermenue && it.Folder.Length == 0) { _error.Text = "Bitte einen Ordner wählen."; return; }
+            bool newHotkey = it.HotkeyKey > 0 && (it.HotkeyKey != _item.HotkeyKey || it.HotkeyModifiers != _item.HotkeyModifiers);
+            if (newHotkey && TestHotkey != null && !TestHotkey(it.HotkeyModifiers, it.HotkeyKey))
+            {
+                _error.Text = "Das Tastenkürzel ist schon vergeben.";
+                return;
+            }
+            _item.HotkeyModifiers = it.HotkeyModifiers; _item.HotkeyKey = it.HotkeyKey;
             _item.Kind = it.Kind; _item.Title = it.Title; _item.Command = it.Command; _item.Arguments = it.Arguments;
             _item.WorkingDirectory = it.WorkingDirectory; _item.ShowCmd = it.ShowCmd; _item.RunAsAdmin = it.RunAsAdmin;
             _item.Folder = it.Folder; _item.FoldersFirst = it.FoldersFirst; _item.FilesOnly = it.FilesOnly; _item.Sort = it.Sort; _item.Icon = it.Icon;

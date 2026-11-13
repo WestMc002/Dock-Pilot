@@ -21,7 +21,7 @@ namespace DockPilot
     /// Erzeugt die Screenshots für die README aus Beispieldaten (Vorlage: WindowGrid / Monitor Dimmer).
     /// Aufruf: "Dock Pilot.exe" --screenshots [Zielordner]. Die echten Einstellungen (Dock Pilot.ini, Dock.ini),
     /// der Autostart und das laufende Dock werden nicht angefasst; nichts wird gespeichert.
-    /// Bilder: hell.png / dunkel.png (Dock auf einem Beispiel-Desktop), menue-/ordnermenue-*.png (Menü über dem Dock)
+    /// Bilder: hell.png / dunkel.png (Dock auf einem Beispiel-Desktop), vorschau-*.png (Fenstervorschau), menue-/ordnermenue-*.png (Menü über dem Dock)
     /// und &lt;name&gt;-hell.png / &lt;name&gt;-dunkel.png für die Fenster.
     /// Fenster und Menüs werden einmal vor schwarzem und einmal vor weißem Hintergrund aufgenommen; daraus ergeben
     /// sich durchsichtige runde Ecken und der Windows-Schatten. Das Dock selbst wird ohne Bildschirm gezeichnet.
@@ -81,6 +81,9 @@ namespace DockPilot
 
                         // Titelbild: Dock auf dem Beispiel-Desktop, Maus über „Editor“
                         Save(DockShot(settings, items, dark, editor), Path.Combine(outDir, suffix + ".png"));
+
+                        // Fenstervorschau über einem laufenden Programm
+                        Save(PreviewScene(settings, items, dark, editor), Path.Combine(outDir, "vorschau-" + suffix + ".png"));
 
                         // Kontextmenü eines Eintrags – über dem Dock, wie bei der Benutzung
                         using (DockWindow dock = DemoDock(settings, items))
@@ -225,7 +228,27 @@ namespace DockPilot
         /// <summary>Dock am unteren Rand des Beispiel-Desktops, Ausschnitt um die Leiste.</summary>
         private static Bitmap DockShot(Settings settings, List<DockItem> items, bool dark, int hover)
         {
-            return Scene(settings, items, dark, hover, DeskScale, null, 0);
+            return Scene(settings, items, dark, hover, SceneScale(), null, 0, false);
+        }
+
+        /// <summary>
+        /// Skalierung für Titelbild und Fenstervorschau: wie der Hauptbildschirm (so groß wie die Menübilder),
+        /// mindestens 150 % (scharf auch auf der README-Seite).
+        /// </summary>
+        private static float SceneScale()
+        {
+            float scale = Math.Max(DeskScale, 1.5f);
+            try { using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) scale = Math.Max(scale, g.DpiX / 96f); } catch { }
+            return scale;
+        }
+
+        /// <summary>Dock mit der Fenstervorschau über einem laufenden Programm (gezeichnete Beispielfenster).</summary>
+        private static Bitmap PreviewScene(Settings settings, List<DockItem> items, bool dark, int anchor)
+        {
+            float scale = SceneScale();
+            int margin;
+            using (Bitmap popup = PreviewPopup.RenderDemo(new[] { "Notizen.txt – Editor", "Einkaufsliste.txt – Editor" }, scale, dark, out margin))
+                return Scene(settings, items, dark, anchor, scale, popup, margin, true);
         }
 
         /// <summary>Wie DockShot, dazu das aufgenommene Menü über dem Symbol – so wie es beim Anklicken erscheint.</summary>
@@ -235,11 +258,12 @@ namespace DockPilot
             {
                 // Desktop in der Skalierung des Bildschirms zeichnen, auf dem das Menü aufgenommen wurde
                 float scale = Math.Max(1f, margin / (float)MenuMargin);
-                return Scene(settings, items, dark, anchor, scale, menu, margin);
+                return Scene(settings, items, dark, anchor, scale, menu, margin, false);
             }
         }
 
-        private static Bitmap Scene(Settings settings, List<DockItem> items, bool dark, int hover, float scale, Bitmap menu, int margin)
+        /// <summary>center: das Bild (Menü bzw. Vorschau) mittig über dem Symbol statt links bündig.</summary>
+        private static Bitmap Scene(Settings settings, List<DockItem> items, bool dark, int hover, float scale, Bitmap menu, int margin, bool center)
         {
             // gleiche Fläche wie 1920 × 1080 bei 125 %, nur in der passenden Skalierung
             int deskW = (int)Math.Round(DeskW / DeskScale * scale), deskH = (int)Math.Round(DeskH / DeskScale * scale);
@@ -268,7 +292,8 @@ namespace DockPilot
                             int gap = (int)Math.Round(6 * scale);
                             int bottom = window.Top + Math.Min(shelf.Top, icon.Top) - gap;
                             int menuW = menu.Width - 2 * margin, menuH = menu.Height - 2 * margin;
-                            int left = Math.Max(0, Math.Min(window.Left + icon.Left, deskW - menuW));
+                            int wanted = center ? window.Left + icon.Left + icon.Width / 2 - menuW / 2 : window.Left + icon.Left;
+                            int left = Math.Max(0, Math.Min(wanted, deskW - menuW));
                             menuRect = new Rectangle(left, bottom - menuH, menuW, menuH);
                             g.DrawImage(menu, menuRect.Left - margin, menuRect.Top - margin, menu.Width, menu.Height);
                         }

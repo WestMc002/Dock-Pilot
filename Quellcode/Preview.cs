@@ -350,5 +350,88 @@ namespace DockPilot
             }
             base.Dispose(disposing);
         }
+
+        /// <summary>
+        /// Screenshots: die Vorschau mit gezeichneten Beispielfenstern (keine echten Fenster), gleiche Maße wie oben.
+        /// Die erste Kachel ist wie unter der Maus hervorgehoben. margin: durchsichtiger Rand für den Schatten.
+        /// </summary>
+        internal static Bitmap RenderDemo(string[] titles, float sc, bool dark, out int margin)
+        {
+            margin = (int)Math.Round(24 * sc);
+            int pad = (int)Math.Round(8 * sc), titleH = (int)Math.Round(30 * sc), inner = (int)Math.Round(8 * sc), gap = (int)Math.Round(4 * sc);
+            int imgW = (int)(200 * sc), imgH = (int)(120 * sc);
+            int tileW = imgW + 2 * inner, tileH = titleH + imgH + inner;
+            int n = titles.Length;
+            int width = 2 * pad + n * tileW + (n - 1) * gap, height = tileH + 2 * pad;
+            Bitmap bmp = new Bitmap(width + 2 * margin, height + 2 * margin, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                RectangleF box = new RectangleF(margin, margin, width, height);
+                // weicher Schatten
+                for (int i = 10; i >= 1; i--)
+                {
+                    float d = i * 1.6f * sc;
+                    RectangleF sr = new RectangleF(box.X - d, box.Y - d + 3 * sc, box.Width + 2 * d, box.Height + 2 * d);
+                    using (GraphicsPath path = Theme.RoundRect(sr, 8 * sc + d))
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(dark ? 9 : 5, 0, 0, 0)))
+                        g.FillPath(b, path);
+                }
+                Color back = dark ? Color.FromArgb(44, 44, 44) : Color.FromArgb(249, 249, 249);
+                Color text = dark ? Color.White : Color.FromArgb(27, 27, 27);
+                using (GraphicsPath path = Theme.RoundRect(box, 8 * sc))
+                {
+                    using (SolidBrush b = new SolidBrush(back)) g.FillPath(b, path);
+                    using (Pen pen = new Pen(dark ? Color.FromArgb(72, 72, 72) : Color.FromArgb(214, 214, 214))) g.DrawPath(pen, path);
+                }
+                using (Font f = Theme.UiFont(12f * sc, FontStyle.Regular))
+                using (StringFormat sf = new StringFormat(StringFormatFlags.NoWrap))
+                {
+                    sf.LineAlignment = StringAlignment.Center;
+                    sf.Trimming = StringTrimming.EllipsisCharacter;
+                    for (int i = 0; i < n; i++)
+                    {
+                        Rectangle tile = new Rectangle(margin + pad + i * (tileW + gap), margin + pad, tileW, tileH);
+                        bool hot = i == 0;
+                        if (hot)
+                            using (GraphicsPath path = Theme.RoundRect(new RectangleF(tile.X + 0.5f, tile.Y + 0.5f, tile.Width - 1, tile.Height - 1), 5 * sc))
+                            using (SolidBrush b = new SolidBrush(dark ? Color.FromArgb(62, 62, 62) : Color.FromArgb(232, 232, 232)))
+                                g.FillPath(b, path);
+                        int closeW = (int)Math.Round(22 * sc);
+                        RectangleF tr = new RectangleF(tile.X + 8 * sc, tile.Y, tile.Width - 16 * sc - (hot ? closeW : 0), titleH);
+                        using (SolidBrush b = new SolidBrush(text)) g.DrawString(titles[i], f, b, tr, sf);
+                        if (hot)
+                        {
+                            // Schließen-Kreuz
+                            float cx = tile.Right - 4 * sc - closeW / 2f, cy = tile.Y + titleH / 2f, k = 4 * sc;
+                            using (Pen pen = new Pen(text, Math.Max(1f, sc)))
+                            {
+                                g.DrawLine(pen, cx - k, cy - k, cx + k, cy + k);
+                                g.DrawLine(pen, cx - k, cy + k, cx + k, cy - k);
+                            }
+                        }
+                        // Beispielfenster: Titelleiste und ein paar Textzeilen
+                        RectangleF w = new RectangleF(tile.X + inner, tile.Y + titleH, imgW, imgH);
+                        using (GraphicsPath path = Theme.RoundRect(w, 4 * sc))
+                        {
+                            using (SolidBrush b = new SolidBrush(dark ? Color.FromArgb(30, 30, 30) : Color.White)) g.FillPath(b, path);
+                            Region old = g.Clip;
+                            g.SetClip(path);
+                            using (SolidBrush b = new SolidBrush(dark ? Color.FromArgb(50, 50, 50) : Color.FromArgb(236, 238, 242)))
+                                g.FillRectangle(b, w.X, w.Y, w.Width, 16 * sc);
+                            g.Clip = old;
+                            using (Pen pen = new Pen(dark ? Color.FromArgb(78, 78, 78) : Color.FromArgb(206, 206, 206))) g.DrawPath(pen, path);
+                        }
+                        float[] lines = i % 2 == 0 ? new[] { 0.72f, 0.55f, 0.80f, 0.38f, 0.62f } : new[] { 0.45f, 0.66f, 0.30f, 0.58f };
+                        using (SolidBrush b = new SolidBrush(dark ? Color.FromArgb(96, 96, 96) : Color.FromArgb(196, 200, 208)))
+                            for (int k2 = 0; k2 < lines.Length; k2++)
+                                using (GraphicsPath path = Theme.RoundRect(new RectangleF(w.X + 12 * sc, w.Y + 30 * sc + k2 * 15 * sc, (w.Width - 24 * sc) * lines[k2], 5 * sc), 2.5f * sc))
+                                    g.FillPath(b, path);
+                    }
+                }
+            }
+            return bmp;
+        }
     }
 }

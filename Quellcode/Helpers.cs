@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -49,6 +50,84 @@ namespace DockPilot
                 if (link != null && Marshal.IsComObject(link)) Marshal.ReleaseComObject(link);
                 if (shell != null && Marshal.IsComObject(shell)) Marshal.ReleaseComObject(shell);
             }
+        }
+
+        /// <summary>Verknüpfung (.lnk) auf eine Datei oder einen Ordner anlegen. Rückgabe: Erfolg.</summary>
+        public static bool Create(string linkPath, string target)
+        {
+            object shell = null, link = null;
+            try
+            {
+                Type t = Type.GetTypeFromProgID("WScript.Shell");
+                if (t == null) return false;
+                shell = Activator.CreateInstance(t);
+                link = t.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { linkPath });
+                Type lt = link.GetType();
+                lt.InvokeMember("TargetPath", BindingFlags.SetProperty, null, link, new object[] { target });
+                if (File.Exists(target))
+                    lt.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, link, new object[] { Path.GetDirectoryName(target) });
+                lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+                return File.Exists(linkPath);
+            }
+            catch { return false; }
+            finally
+            {
+                if (link != null && Marshal.IsComObject(link)) Marshal.ReleaseComObject(link);
+                if (shell != null && Marshal.IsComObject(shell)) Marshal.ReleaseComObject(shell);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Zuletzt verwendete Dateien eines Programms: die neuesten Einträge aus dem Windows-Ordner „Zuletzt verwendet“,
+    /// deren Dateityp mit diesem Programm geöffnet wird. (Die Sprunglisten der Taskleiste selbst sind nicht lesbar dokumentiert.)
+    /// </summary>
+    internal static class RecentFiles
+    {
+        private static readonly Dictionary<string, string> ExeOfExtension = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>exePaths: EXE-Dateien des Eintrags; verglichen wird der Dateiname.</summary>
+        public static List<string> For(ICollection<string> exePaths, int max)
+        {
+            List<string> result = new List<string>();
+            HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string exe in exePaths)
+            {
+                try { names.Add(Path.GetFileName(exe)); } catch { }
+            }
+            if (names.Count == 0) return result;
+            // zuerst die Sprungliste von Windows (genau die Dateien dieses Programms) …
+            List<string> jump = JumpList.RecentFor(exePaths, max);
+            if (jump != null && jump.Count > 0) return jump;
+            // … sonst die Liste „Zuletzt verwendet“, gefiltert nach dem Programm, das den Dateityp öffnet
+            try
+            {
+                string dir = Environment.GetFolderPath(Environment.SpecialFolder.Recent);
+                FileInfo[] links = new DirectoryInfo(dir).GetFiles("*.lnk");
+                Array.Sort(links, delegate (FileInfo a, FileInfo b) { return b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc); });
+                HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int scanned = 0;
+                foreach (FileInfo fi in links)
+                {
+                    if (++scanned > 300 || result.Count >= max) break;
+                    // die Verknüpfung heißt wie die Datei („Brief.docx.lnk“) – so ist die Endung ohne Öffnen bekannt
+                    string ext = Path.GetExtension(Path.GetFileNameWithoutExtension(fi.Name));
+                    if (ext.Length < 2) continue; // Ordner oder ohne Endung
+                    string exe;
+                    if (!ExeOfExtension.TryGetValue(ext, out exe))
+                    {
+                        exe = DockNative.AssociatedExe(ext);
+                        ExeOfExtension[ext] = exe;
+                    }
+                    if (exe.Length == 0 || !names.Contains(Path.GetFileName(exe))) continue;
+                    ShortcutInfo lnk = ShortcutInfo.Read(fi.FullName);
+                    if (lnk == null || lnk.Target.Length == 0 || !seen.Add(lnk.Target)) continue;
+                    if (!File.Exists(lnk.Target)) continue; // inzwischen gelöscht oder verschoben
+                    result.Add(lnk.Target);
+                }
+            }
+            catch { }
+            return result;
         }
     }
 

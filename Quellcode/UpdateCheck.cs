@@ -40,6 +40,7 @@ namespace DockPilot
 
         /// <summary>Fehler der letzten Prüfung von Hand (null = kein Fehler).</summary>
         private static string _error;
+        private static string _errorMore; // technischer Originaltext zum Fehler (für „Details“), kann fehlen
 
         /// <summary>Wird ausgelöst, wenn sich <see cref="Available"/> geändert hat (im UI-Thread).</summary>
         public static event EventHandler AvailableChanged;
@@ -56,6 +57,9 @@ namespace DockPilot
         }
 
         // ------------------------------------------------------------------ Abfrage
+
+        /// <summary>Kein Fehler: Es gibt noch keine fertige Version (Vorabversionen zählen bei „latest“ nicht).</summary>
+        private const string NoRelease = "Auf GitHub ist noch keine fertige Version veröffentlicht.";
 
         public static ReleaseInfo GetLatest()
         {
@@ -75,9 +79,16 @@ namespace DockPilot
             catch (WebException ex)
             {
                 HttpWebResponse http = ex.Response as HttpWebResponse;
-                if (http != null && http.StatusCode == HttpStatusCode.NotFound) throw new Exception("Auf GitHub ist noch keine Version veröffentlicht.");
-                if (http != null && (int)http.StatusCode == 403) throw new Exception("GitHub hat die Anfrage abgelehnt (zu viele Anfragen). Später erneut versuchen.");
-                throw new Exception("GitHub nicht erreichbar: " + ex.Message);
+                if (http != null && http.StatusCode == HttpStatusCode.NotFound) throw new Exception(NoRelease);
+                // kurze Meldung für das Info-Fenster: Vor dem Knopf ist Platz für etwa 29 Zeichen, mit „Details“
+                // dahinter für etwa 20. Der Originaltext steht hinter „Details“.
+                string brief = "Nicht erreichbar.";
+                if (http != null && (int)http.StatusCode == 403) brief = "Zu viele Anfragen.";
+                else if (ex.Status == WebExceptionStatus.NameResolutionFailure || ex.Status == WebExceptionStatus.ConnectFailure) brief = "Keine Verbindung.";
+                else if (ex.Status == WebExceptionStatus.Timeout) brief = "Keine Antwort.";
+                Exception shown = new Exception(brief);
+                shown.Data["Detail"] = ex.Message;
+                throw shown;
             }
 
             ReleaseInfo info = new ReleaseInfo();
@@ -88,7 +99,7 @@ namespace DockPilot
             if (m.Success) info.PageUrl = m.Groups[1].Value;
             m = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"(https://[^\"]+\\.zip)\"", RegexOptions.IgnoreCase);
             if (m.Success) info.ZipUrl = m.Groups[1].Value;
-            if (string.IsNullOrEmpty(info.Version)) throw new Exception("Antwort von GitHub ohne Versionsnummer.");
+            if (string.IsNullOrEmpty(info.Version)) throw new Exception("Antwort unlesbar.");
             return info;
         }
 
@@ -126,7 +137,14 @@ namespace DockPilot
             DateTime last = LastCheck(s);
             string lastText = last == DateTime.MinValue ? "" : "Zuletzt geprüft " + last.ToLocalTime().ToString("dd.MM.yyyy");
             if (Available != null) return new UpdateStatus(UpdateKind.Available, "Version " + Available.Version + " verfügbar", lastText);
-            if (_error != null) return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", _error);
+            // noch nichts Fertiges veröffentlicht: neutral melden, das ist kein Fehler
+            if (_error == NoRelease) return new UpdateStatus(UpdateKind.Unknown, "Nur Vorabversionen", "Noch keine fertige Version."); // beide Zeilen kurz: wenig Platz
+            if (_error != null)
+            {
+                UpdateStatus failed = new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", _error);
+                failed.More = _errorMore;
+                return failed;
+            }
             if (last == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
             return new UpdateStatus(UpdateKind.Current, "Aktuell", lastText);
         }
@@ -147,9 +165,16 @@ namespace DockPilot
             ThreadPool.QueueUserWorkItem(delegate
             {
                 ReleaseInfo release = null;
-                string error = null;
+                string error = null, more = null;
                 try { release = GetLatest(); }
-                catch (Exception ex) { error = ex.Message; }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    more = ex.Data["Detail"] as string;
+                    // unerwarteter Fehler mit langem Text: Die Überschrift „Prüfung nicht möglich“ sagt schon alles,
+                    // darunter steht nur „Details“ mit dem Text
+                    if (more == null && error != null && error != NoRelease && error.Length > 36) { more = error; error = ""; }
+                }
                 try
                 {
                     invoker.BeginInvoke((MethodInvoker)delegate
@@ -157,6 +182,7 @@ namespace DockPilot
                         if (release != null)
                         {
                             _error = null;
+                            _errorMore = null;
                             s.LastUpdateCheck = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
                             s.Save();
                             SetAvailable(IsNewer(release.Version) ? release : null);
@@ -164,6 +190,7 @@ namespace DockPilot
                         else if (manual)
                         {
                             _error = error;
+                            _errorMore = more;
                         }
                         if (done != null) done(Status(s));
                     });
@@ -343,6 +370,8 @@ Start-Process -FilePath $Exe -ArgumentList '--nach-update'
     {
         public readonly UpdateKind Kind;
         public readonly string Title, Detail;
+        /// <summary>Ausführlicher Text zur zweiten Zeile (hinter „Details“), null = keiner.</summary>
+        public string More;
         public UpdateStatus(UpdateKind kind, string title, string detail) { Kind = kind; Title = title; Detail = detail ?? ""; }
     }
 }

@@ -124,7 +124,7 @@ namespace DockPilot
             Settings settings = Demo.Active || LiveSettings == null ? new Settings() : LiveSettings;
             InfoCard card = new InfoCard(k, _card, _border, _back);
             card.Location = new Point(S(24), y);
-            card.Size = new Size(W - S(48), S(18) * 2 + rowCount * S(26) + S(60) + S(32)); // + Zeilen Updates und Automatisch prüfen
+            card.Size = new Size(W - S(48), S(18) * 2 + rowCount * S(26) + S(49) + S(32)); // + Zeilen Updates und Automatisch prüfen
             ToolTip tip = new ModernToolTip();
             for (int i = 0; i < rowCount; i++)
             {
@@ -208,12 +208,13 @@ namespace DockPilot
             name.ForeColor = _muted;
             name.BackColor = _card;
             name.TextAlign = ContentAlignment.MiddleLeft;
-            name.Bounds = new Rectangle(S(24), uy + S(9), S(110), S(22));
+            // gleicher Zeilenabstand wie die Zeilen darüber (26): Die Schrift sitzt mittig in uy .. uy + 26
+            name.Bounds = new Rectangle(S(24), uy + S(2), S(110), S(22));
             card.Controls.Add(name);
 
             StatusGlyph glyph = new StatusGlyph(k);
             glyph.BackColor = _card;
-            glyph.Bounds = new Rectangle(x0, uy + S(9), S(20), S(22));
+            glyph.Bounds = new Rectangle(x0, uy + S(2), S(20), S(22));
             card.Controls.Add(glyph);
 
             Label title = new Label();
@@ -233,6 +234,43 @@ namespace DockPilot
             detail.Font = new Font("Segoe UI", 8.75f);
             card.Controls.Add(detail);
 
+            // Feld mit dem technischen Originaltext eines Fehlers: klappt in der Karte auf (kein eigenes Fenster),
+            // der Text lässt sich markieren und kopieren
+            Panel moreFrame = new Panel();
+            moreFrame.BackColor = _back;
+            moreFrame.Padding = new Padding(S(8), S(6), S(8), S(6));
+            moreFrame.Bounds = new Rectangle(x0, uy + S(46), right - S(2) - x0, S(50));
+            moreFrame.Visible = false;
+            TextBox moreBox = new TextBox();
+            moreBox.Multiline = true;
+            moreBox.ReadOnly = true;
+            moreBox.WordWrap = true;
+            moreBox.BorderStyle = BorderStyle.None;
+            moreBox.BackColor = _back;
+            moreBox.ForeColor = _muted;
+            moreBox.Font = detail.Font;
+            moreBox.TabStop = false;
+            moreBox.Dock = DockStyle.Fill;
+            moreFrame.Controls.Add(moreBox);
+            card.Controls.Add(moreFrame);
+            Action<bool> expand = null; // weiter unten gesetzt, wenn die Zeile „Automatisch prüfen“ steht
+
+            // „Details“ hinter einer kurzen Fehlermeldung: klappt den technischen Originaltext auf und zu
+            Label more = new Label();
+            more.Text = "Details";
+            more.ForeColor = _versionText;
+            more.BackColor = _card;
+            more.UseMnemonic = false;
+            more.TextAlign = ContentAlignment.TopLeft;
+            more.Font = detail.Font;
+            more.Cursor = Cursors.Hand;
+            more.Visible = false;
+            more.Click += delegate
+            {
+                if (expand != null) expand(!moreFrame.Visible);
+            };
+            card.Controls.Add(more);
+
             DialogButton check = new DialogButton("Jetzt prüfen", MenuHelper.Refresh, false, k, this, 30);
             DialogButton install = new DialogButton("Aktualisieren", MenuHelper.Download, true, k, this, 30);
             DialogButton page = new DialogButton("Release-Seite", MenuHelper.Link, false, k, this, 30);
@@ -240,9 +278,9 @@ namespace DockPilot
             tip.SetToolTip(install, "Dock Pilot beenden, auf die neue Version aktualisieren und neu starten");
             foreach (DialogButton b in new DialogButton[] { check, install, page })
             {
-                // rechtsbündig mit dem Schalter darunter und auf Höhe der ersten Zeile,
-                // damit die zweite Zeile (letzte Prüfung) die volle Breite hat
-                b.Location = new Point(right - S(2) - b.Width, uy + S(20) - b.Height / 2);
+                // rechtsbündig mit dem Schalter darunter; Oberkante bündig mit der Schrift der ersten Zeile
+                // („Updates“ und Überschrift), der Knopf reicht daneben über beide Zeilen
+                b.Location = new Point(right - S(2) - b.Width, uy + S(8)); // Oberkante auf Höhe der Großbuchstaben
                 card.Controls.Add(b);
                 b.BringToFront(); // vor der zweiten Zeile, die bis zum rechten Rand reicht – sonst ist der Knopf unten abgeschnitten
             }
@@ -268,9 +306,31 @@ namespace DockPilot
                 check.Visible = !available;
                 check.Enabled = st.Kind != UpdateKind.Checking;
                 DialogButton shown = install.Visible ? install : page.Visible ? page : check;
-                int tx = x0 + S(28);
-                title.Bounds = new Rectangle(tx, uy + S(9), Math.Max(S(40), shown.Left - S(12) - tx), S(22));
-                detail.Bounds = new Rectangle(tx, uy + S(33), Math.Max(S(40), right - tx), S(20));
+                int tx = x0 + S(23); // dicht hinter dem Symbol
+                int beside = shown.Left - S(12) - tx; // Platz links vom Knopf
+                title.Bounds = new Rectangle(tx, uy + S(2), Math.Max(S(40), beside), S(22));
+                bool hasMore = !string.IsNullOrEmpty(st.More);
+                int moreW = hasMore ? TextRenderer.MeasureText(more.Text, more.Font).Width + S(2) : 0;
+                bool hasDetail = st.Detail.Length > 0;
+                int need = hasDetail ? TextRenderer.MeasureText(st.Detail, detail.Font).Width + S(2) : 0;
+                int extra = hasMore ? (hasDetail ? S(4) : 0) + moreW : 0;
+                // Die zweite Zeile sitzt immer dicht unter der ersten und endet vor dem Knopf. Alle Texte sind dafür
+                // kurz gehalten; ein doch zu langer wird mit „…“ gekürzt (ganz im Tooltip).
+                int dy = uy + S(23);
+                int room = shown.Left - S(6) - tx - extra;
+                detail.Visible = hasDetail;
+                detail.Bounds = new Rectangle(tx, dy, hasDetail ? Math.Max(S(40), Math.Min(need, room)) : 0, S(20));
+                moreBox.Text = st.More ?? "";
+                if (!hasMore && expand != null) expand(false); // kein Fehler mehr: Feld wieder zuklappen
+                more.Visible = hasMore;
+                // ohne Text davor steht „Details“ bündig unter der Überschrift
+                // „Details“ mit einem Leerzeichen Abstand direkt hinter dem Text – nicht hinter dem Feld des Texts,
+                // das für den Rand der Schrift etwas breiter ist
+                int textEnd = hasDetail
+                    ? tx + Math.Min(TextRenderer.MeasureText(st.Detail, detail.Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width - S(3), detail.Width)
+                    : tx;
+                more.Bounds = new Rectangle(textEnd, dy, Math.Max(1, moreW), S(20));
+                more.BringToFront();
             };
 
             check.Click += delegate
@@ -291,7 +351,7 @@ namespace DockPilot
             show(Updater.Status(settings));
 
             // Automatisch prüfen: Text bündig mit den Werten darüber, Schalter rechts
-            int ay = uy + S(60);
+            int ay = uy + S(49); // Schrift zwei Zeilenabstände unter „Updates“
             ToggleSwitch auto = new ToggleSwitch();
             auto.Size = new Size(S(44), S(22));
             auto.Location = new Point(right - S(2) - auto.Width, ay + (S(32) - auto.Height) / 2);
@@ -314,6 +374,41 @@ namespace DockPilot
             autoText.Bounds = new Rectangle(x0, ay, auto.Left - S(8) - x0, S(32));
             autoText.Click += delegate { auto.Checked = !auto.Checked; };
             card.Controls.Add(autoText);
+
+            // Details auf-/zuklappen: Die Zeile „Automatisch prüfen“, die Karte, alles darunter und das Fenster
+            // rücken um die Höhe des Felds
+            bool expanded = false;
+            int grown = 0;
+            expand = delegate (bool open)
+            {
+                if (open == expanded) return;
+                expanded = open;
+                if (open)
+                {
+                    // so hoch wie der Text (höchstens sechs Zeilen), nicht mehr
+                    int textW = moreFrame.Width - moreFrame.Padding.Horizontal;
+                    Size ts = TextRenderer.MeasureText(moreBox.Text, moreBox.Font, new Size(textW, 10000),
+                        TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix);
+                    int line = TextRenderer.MeasureText("Ag", moreBox.Font).Height;
+                    moreFrame.Height = Math.Max(line, Math.Min(ts.Height, 6 * line)) + moreFrame.Padding.Vertical + S(2);
+                    grown = moreFrame.Height + S(8);
+                }
+                int d = open ? grown : -grown;
+                moreFrame.Visible = open;
+                more.Text = open ? "Weniger" : "Details"; // kurz, damit es auch hinter einer Meldung vor dem Knopf Platz hat
+                more.Width = TextRenderer.MeasureText(more.Text, more.Font).Width + S(2);
+                auto.Top += d;
+                autoText.Top += d;
+                card.Height += d;
+                foreach (Control c in Controls)
+                    if (c != card && c.Top > card.Top) c.Top += d;
+                // die Fenstergröße ist festgestellt (Minimum = Maximum): erst lösen, dann neu feststellen
+                MinimumSize = Size.Empty;
+                MaximumSize = Size.Empty;
+                ClientSize = new Size(ClientSize.Width, ClientSize.Height + d);
+                MinimumSize = Size;
+                MaximumSize = Size;
+            };
         }
 
         internal Color BackColorUi { get { return _back; } }

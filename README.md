@@ -26,12 +26,15 @@ The program interface is in German.
 ### Features
 
 - **Dock at any screen edge** (top, bottom, left, right) on any monitor, sharp at every display scaling
-- **Zoom effects:** bubble (optionally without widening the bar), soft bubble, fixed, lift, glow, focus, bounce or none; if the dock doesn't fit on the screen, icons shrink automatically
-- **Running programs** are marked; a click brings the window to the front like the taskbar (Shift+click or middle-click starts a new instance)
+- **Zoom effects:** bubble (optionally without widening the bar), soft bubble, magnifier, lift, pulse or none – freely combined with a highlight (glow, plate, underline, tint, tilt, wobble, bounce, focus, desaturate) of adjustable strength, with a live preview in the settings; if the dock doesn't fit on the screen, icons shrink automatically
+- **Running programs** are marked; a click brings the window to the front like the taskbar (Shift+click or middle-click starts a new instance), the mouse wheel cycles through their windows, a window asking for attention makes its icon bounce and glow; optionally shows running programs that have no dock entry
+- **Up to three docks** – e.g. one per monitor – each with its own entries, position and icon size; **profiles** switch the entries of all docks at once (like virtual desktops)
+- **Keyboard control:** after the hotkey, arrow keys select an icon, Enter starts it, the menu key opens its context menu; every entry can also have its own global hotkey
 - **Window previews** like the taskbar: hover over a running program to see live thumbnails of its windows, click to switch, × to close
-- **Customizable look:** labels (font, size, bold, color, shadow), reflection, bar opacity and corner radius or icons only
-- **Folder menus:** a folder opens as a menu with submenus – ideal for collections of shortcuts (replaces the KkMenu docklet)
-- **Drag & drop:** drag programs, shortcuts, files and folders from Explorer into the dock; drop files onto a program to open them with it; rearrange icons by dragging
+- **Customizable look:** labels (font, size, bold, color, shadow), reflection, bar opacity and corner radius or icons only; your own icons, assigned by program name
+- **Folder menus:** a folder opens as a menu with submenus – ideal for collections of shortcuts (replaces the KkMenu docklet); sort as you like, type to jump to an entry, drop files onto it to create shortcuts
+- **Recent files:** right-click a program to reopen the files last used with it (read from the Windows jump list where available); **recycle bin** icon shows empty/full and can be emptied from the menu
+- **Drag & drop:** drag programs, shortcuts, files and folders from Explorer into the dock; drop files onto a program to open them with it; rearrange icons by dragging, drag an icon out of the dock or an entry out of a folder menu to remove it (with undo); icons glide smoothly into place
 - **Auto-hide** with adjustable delays, **hidden while a full-screen program runs** (games, videos), **hotkey** to show and hide
 - **Windows 11 look:** background like an active window (Mica), light/dark mode, Windows accent color, menus in Windows 11 style
 - **Import from RocketDock:** entries, separators, folder menus, custom icons, sizes, position, auto-hide and hotkey from RocketDock's `Settings.ini`
@@ -67,12 +70,15 @@ Programmleiste am Bildschirmrand – ein moderner Nachfolger des bekannten Rocke
 ### Funktionen
 
 - **Dock an jedem Bildschirmrand** (oben, unten, links, rechts) auf jedem Bildschirm, scharf bei jeder Skalierung
-- **Zoom-Effekte:** Blase (auf Wunsch, ohne dass die Leiste breiter wird), weiche Blase, fest, anheben, leuchten, Fokus, federn oder aus; passt das Dock nicht auf den Bildschirm, werden die Symbole automatisch kleiner
-- **Laufende Programme** werden markiert; ein Klick holt das Fenster nach vorne wie in der Taskleiste (Umschalt + Klick oder Mittelklick startet neu)
+- **Zoom-Effekte:** Blase (auf Wunsch, ohne dass die Leiste breiter wird), weiche Blase, Lupe, anheben, pulsieren oder aus – frei kombinierbar mit einer Hervorhebung (leuchten, Sockel, Unterstrich, einfärben, kippen, wackeln, federn, Fokus, entsättigen) in einstellbarer Stärke, mit Live-Vorschau in den Einstellungen; passt das Dock nicht auf den Bildschirm, werden die Symbole automatisch kleiner
+- **Laufende Programme** werden markiert; ein Klick holt das Fenster nach vorne wie in der Taskleiste (Umschalt + Klick oder Mittelklick startet neu), das Mausrad blättert durch ihre Fenster, will ein Fenster Aufmerksamkeit, hüpft und leuchtet sein Symbol; auf Wunsch erscheinen auch laufende Programme ohne Dock-Eintrag
+- **Bis zu drei Docks** – z. B. eines je Bildschirm – mit eigenen Einträgen, eigener Position und Symbolgröße; **Profile** schalten die Einträge aller Docks auf einmal um (wie mehrere Desktops)
+- **Tastatursteuerung:** nach dem Tastenkürzel wählen die Pfeiltasten ein Symbol, Enter startet es, die Menütaste öffnet das Kontextmenü; jeder Eintrag kann außerdem ein eigenes globales Tastenkürzel bekommen
 - **Fenstervorschau** wie in der Taskleiste: Maus auf ein laufendes Programm zeigt Live-Vorschaubilder seiner Fenster, Klick wechselt dorthin, × schließt
-- **Aussehen einstellbar:** Beschriftung (Schriftart, Größe, fett, Farbe, Schatten), Spiegelung, Deckkraft und Eckenradius der Leiste oder nur Symbole
-- **Ordnermenüs:** ein Ordner öffnet sich als Menü mit Untermenüs – ideal für Sammlungen von Verknüpfungen (Ersatz für das KkMenu-Docklet)
-- **Ziehen und Ablegen:** Programme, Verknüpfungen, Dateien und Ordner aus dem Explorer ins Dock ziehen; Dateien auf ein Programm ziehen öffnet sie damit; Reihenfolge per Ziehen ändern
+- **Aussehen einstellbar:** Beschriftung (Schriftart, Größe, fett, Farbe, Schatten), Spiegelung, Deckkraft und Eckenradius der Leiste oder nur Symbole; eigene Symbole, nach Programmnamen zugeordnet
+- **Ordnermenüs:** ein Ordner öffnet sich als Menü mit Untermenüs – ideal für Sammlungen von Verknüpfungen (Ersatz für das KkMenu-Docklet); Sortierung frei wählbar, Tippen springt zum Eintrag, hineingezogene Dateien werden als Verknüpfung abgelegt
+- **Zuletzt verwendet:** Rechtsklick auf ein Programm öffnet die zuletzt damit verwendeten Dateien (wo vorhanden aus der Sprungliste von Windows); das **Papierkorb**-Symbol zeigt leer/voll, Leeren über das Menü
+- **Ziehen und Ablegen:** Programme, Verknüpfungen, Dateien und Ordner aus dem Explorer ins Dock ziehen; Dateien auf ein Programm ziehen öffnet sie damit; Reihenfolge per Ziehen ändern, Symbol aus dem Dock oder Eintrag aus einem Ordnermenü ziehen entfernt es (mit Rückgängig); die Symbole gleiten sanft an ihren Platz
 - **Automatisch ausblenden** mit einstellbarer Verzögerung, **verborgen bei Vollbild-Programmen** (Spiele, Videos), **Tastenkürzel** zum Ein- und Ausblenden
 - **Windows-11-Design:** Hintergrund wie ein aktives Fenster (Mica), Hell/Dunkel, Windows-Akzentfarbe, Menüs im Windows-11-Stil
 - **RocketDock übernehmen:** Einträge, Trennlinien, Ordnermenüs, eigene Symbole, Größen, Position, automatisches Ausblenden und Tastenkürzel aus der `Settings.ini` von RocketDock
@@ -106,6 +112,10 @@ Voraussetzungen: Windows 10 oder 11 mit .NET Framework 4.x (in Windows enthalten
 ## Screenshots
 
 <table>
+  <tr>
+    <td><img src="Screenshots/vorschau-hell.png" alt="Window preview / Fenstervorschau, hell"></td>
+    <td><img src="Screenshots/vorschau-dunkel.png" alt="Window preview / Fenstervorschau, dunkel"></td>
+  </tr>
   <tr>
     <td><img src="Screenshots/ordnermenue-hell.png" alt="Folder menu / Ordnermenü, hell"></td>
     <td><img src="Screenshots/ordnermenue-dunkel.png" alt="Folder menu / Ordnermenü, dunkel"></td>

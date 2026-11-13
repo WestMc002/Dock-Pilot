@@ -69,6 +69,113 @@ namespace DockPilot
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
 
+        // ---------- Papierkorb ----------
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct SHQUERYRBINFO32 { public int cbSize; public long i64Size; public long i64NumItems; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SHQUERYRBINFO64 { public int cbSize; public long i64Size; public long i64NumItems; }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHQueryRecycleBinW")]
+        private static extern int SHQueryRecycleBin32(string root, ref SHQUERYRBINFO32 info);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHQueryRecycleBinW")]
+        private static extern int SHQueryRecycleBin64(string root, ref SHQUERYRBINFO64 info);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHEmptyRecycleBinW")]
+        private static extern int SHEmptyRecycleBin(IntPtr hwnd, string root, int flags);
+
+        /// <summary>Anzahl der Elemente im Papierkorb (alle Laufwerke); -1 = nicht feststellbar.</summary>
+        public static long RecycleBinItems()
+        {
+            try
+            {
+                // die Struktur ist unter 32 Bit dicht gepackt (20 Bytes), unter 64 Bit nicht (24 Bytes)
+                if (IntPtr.Size == 8)
+                {
+                    SHQUERYRBINFO64 info = new SHQUERYRBINFO64();
+                    info.cbSize = Marshal.SizeOf(typeof(SHQUERYRBINFO64));
+                    return SHQueryRecycleBin64(null, ref info) == 0 ? info.i64NumItems : -1;
+                }
+                else
+                {
+                    SHQUERYRBINFO32 info = new SHQUERYRBINFO32();
+                    info.cbSize = Marshal.SizeOf(typeof(SHQUERYRBINFO32));
+                    return SHQueryRecycleBin32(null, ref info) == 0 ? info.i64NumItems : -1;
+                }
+            }
+            catch { return -1; }
+        }
+
+        /// <summary>Papierkorb leeren – Windows fragt selbst nach.</summary>
+        public static void EmptyRecycleBin(IntPtr owner)
+        {
+            try { SHEmptyRecycleBin(owner, null, 0); } catch { }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
+        private struct SHFILEOPSTRUCT32
+        {
+            public IntPtr hwnd; public uint wFunc; public string pFrom; public string pTo; public ushort fFlags;
+            [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted; public IntPtr hNameMappings; public string lpszProgressTitle;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct SHFILEOPSTRUCT64
+        {
+            public IntPtr hwnd; public uint wFunc; public string pFrom; public string pTo; public ushort fFlags;
+            [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted; public IntPtr hNameMappings; public string lpszProgressTitle;
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW")]
+        private static extern int SHFileOperation32(ref SHFILEOPSTRUCT32 op);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHFileOperationW")]
+        private static extern int SHFileOperation64(ref SHFILEOPSTRUCT64 op);
+
+        /// <summary>Datei in den Papierkorb legen (ohne Rückfrage, wiederherstellbar). true = erledigt.</summary>
+        public static bool Recycle(string path)
+        {
+            try
+            {
+                const uint FO_DELETE = 3;
+                const ushort flags = 0x0004 | 0x0010 | 0x0040 | 0x0400; // SILENT | NOCONFIRMATION | ALLOWUNDO | NOERRORUI
+                string from = path + "\0\0"; // Liste, doppelt abgeschlossen
+                // die Struktur ist unter 32 Bit dicht gepackt, unter 64 Bit nicht
+                if (IntPtr.Size == 8)
+                {
+                    SHFILEOPSTRUCT64 op = new SHFILEOPSTRUCT64();
+                    op.wFunc = FO_DELETE; op.pFrom = from; op.fFlags = flags;
+                    return SHFileOperation64(ref op) == 0 && !op.fAnyOperationsAborted;
+                }
+                else
+                {
+                    SHFILEOPSTRUCT32 op = new SHFILEOPSTRUCT32();
+                    op.wFunc = FO_DELETE; op.pFrom = from; op.fFlags = flags;
+                    return SHFileOperation32(ref op) == 0 && !op.fAnyOperationsAborted;
+                }
+            }
+            catch { return false; }
+        }
+
+        // ---------- Dateizuordnung ----------
+
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, EntryPoint = "AssocQueryStringW")]
+        private static extern int AssocQueryString(int flags, int str, string assoc, string extra, StringBuilder buffer, ref uint length);
+
+        /// <summary>Programm (EXE), das Dateien mit dieser Endung öffnet; leer, wenn keins zugeordnet ist.</summary>
+        public static string AssociatedExe(string extension)
+        {
+            try
+            {
+                uint n = 1024;
+                StringBuilder sb = new StringBuilder((int)n);
+                return AssocQueryString(0, 2 /* ASSOCSTR_EXECUTABLE */, extension, null, sb, ref n) == 0 ? sb.ToString() : "";
+            }
+            catch { return ""; }
+        }
+
         /// <summary>Titel eines Fensters (leer, wenn es keinen hat).</summary>
         public static string WindowTitle(IntPtr hwnd)
         {
@@ -146,9 +253,10 @@ namespace DockPilot
             Dictionary<string, List<IntPtr>> result = new Dictionary<string, List<IntPtr>>();
             HashSet<uint> seen = new HashSet<uint>();
             uint own = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+            IntPtr shell = GetShellWindow();
             EnumWindows(delegate (IntPtr h, IntPtr l)
             {
-                if (!IsWindowVisible(h)) return true;
+                if (!IsWindowVisible(h) || h == shell) return true; // der Desktop („Program Manager“) ist kein Explorer-Fenster
                 if (GetWindow(h, GW_OWNER) != IntPtr.Zero) return true;
                 if ((GetWindowLong(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return true;
                 if (GetWindowTextLength(h) == 0) return true;
@@ -171,6 +279,34 @@ namespace DockPilot
             foreach (uint pid in _pathCache.Keys) if (!seen.Contains(pid)) stale.Add(pid);
             foreach (uint pid in stale) _pathCache.Remove(pid);
             return result;
+        }
+
+        // ---------- Meldungen der Taskleiste (blinkende Fenster) ----------
+
+        public const int HSHELL_WINDOWDESTROYED = 2, HSHELL_WINDOWACTIVATED = 4, HSHELL_RUDEAPPACTIVATED = 0x8004, HSHELL_FLASH = 0x8006;
+
+        [DllImport("user32.dll")]
+        private static extern bool RegisterShellHookWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool DeregisterShellHookWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint RegisterWindowMessage(string name);
+
+        /// <summary>
+        /// Das Fenster bekommt ab jetzt die Meldungen, die auch die Taskleiste erhält (kein globaler Hook).
+        /// Gibt die Nummer der Meldung zurück, 0 = nicht möglich.
+        /// </summary>
+        public static int RegisterShellHook(IntPtr hwnd)
+        {
+            try { return RegisterShellHookWindow(hwnd) ? (int)RegisterWindowMessage("SHELLHOOK") : 0; }
+            catch { return 0; }
+        }
+
+        public static void UnregisterShellHook(IntPtr hwnd)
+        {
+            try { DeregisterShellHookWindow(hwnd); } catch { }
         }
 
         /// <summary>Fenster in den Vordergrund (ohne Wiederherstellen), z. B. Menüs des Docks.</summary>

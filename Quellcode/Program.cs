@@ -36,7 +36,7 @@ namespace DockPilot
                 }
                 if (!created)
                 {
-                    // Läuft schon – dort die Einstellungen öffnen
+                    // Läuft schon – dort das Dock einblenden
                     try
                     {
                         EventWaitHandle ev = EventWaitHandle.OpenExisting(TrayContext.ShowSettingsEventName);

@@ -32,6 +32,9 @@ namespace DockPilot
                 sb.AppendLine(Header);
                 Add(sb, SecSettings, File.Exists(Settings.DataPath) ? File.ReadAllBytes(Settings.DataPath) : new byte[0]);
                 Add(sb, SecDock, File.Exists(DockStore.FilePath) ? File.ReadAllBytes(DockStore.FilePath) : new byte[0]);
+                // weitere Docks (aktives Profil) – ältere Versionen überlesen diese Abschnitte
+                for (int n = 2; n <= Settings.ExtraDocks + 1; n++)
+                    if (DockStore.ExistsFor(n)) Add(sb, SecDock + n, File.ReadAllBytes(DockStore.FileFor(n)));
                 Add(sb, SecIconDir, Encoding.UTF8.GetBytes(Settings.IconDirectory));
                 if (Directory.Exists(Settings.IconDirectory))
                     foreach (string f in Directory.GetFiles(Settings.IconDirectory))
@@ -108,7 +111,24 @@ namespace DockPilot
                 }
                 Keep(DockStore.FilePath);
                 Keep(Settings.DataPath);
+                Directory.CreateDirectory(DockStore.DirectoryOf(DockStore.Profile));
                 File.WriteAllText(DockStore.FilePath, dock, new UTF8Encoding(false));
+                // weitere Docks, falls in der Sicherung enthalten
+                for (int n = 2; n <= Settings.ExtraDocks + 1; n++)
+                {
+                    byte[] more;
+                    if (!parts.TryGetValue(SecDock + n, out more)) continue;
+                    string text = new UTF8Encoding(false).GetString(StripBom(more));
+                    if (parts.TryGetValue(SecIconDir, out oldDir))
+                    {
+                        string from = Encoding.UTF8.GetString(oldDir).TrimEnd('\\');
+                        string to = Settings.IconDirectory.TrimEnd('\\');
+                        if (from.Length > 3 && !from.Equals(to, StringComparison.OrdinalIgnoreCase))
+                            text = ReplaceIgnoreCase(text, from + "\\", to + "\\");
+                    }
+                    Keep(DockStore.FileFor(n));
+                    File.WriteAllText(DockStore.FileFor(n), text, new UTF8Encoding(false));
+                }
                 File.WriteAllBytes(Settings.DataPath, parts[SecSettings]);
                 return null;
             }

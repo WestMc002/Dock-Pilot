@@ -30,8 +30,31 @@ namespace DockPilot
     /// Einstellungen, gespeichert als %LOCALAPPDATA%\Dock Pilot\Dock Pilot.ini.
     /// Größen in Pixeln bei 100 % Skalierung (werden mit der Bildschirmskalierung multipliziert).
     /// </summary>
+    /// <summary>
+    /// Ein weiteres Dock (Dock 2 oder 3): eigene Einträge, eigene Position und Symbolgröße.
+    /// Alles andere – Effekte, Beschriftung, Verhalten – gilt für alle Docks gemeinsam.
+    /// </summary>
+    internal sealed class DockPlace
+    {
+        public bool Enabled = false;
+        public int Monitor = -1;
+        public DockEdge Edge = DockEdge.Oben;
+        public int EdgeDistance = 0;
+        public int CenterPercent = 0;
+        public int IconSize = 44;
+        public int ZoomSize = 64;
+
+        public DockPlace Clone() { return (DockPlace)MemberwiseClone(); }
+    }
+
     internal sealed class Settings
     {
+        /// <summary>Anzahl der weiteren Docks neben dem ersten (Dock 2 und Dock 3).</summary>
+        public const int ExtraDocks = 2;
+        public DockPlace[] Extra = { new DockPlace { Edge = DockEdge.Oben }, new DockPlace { Edge = DockEdge.Links } };
+        public string Profile = "";               // aktives Profil (Zusammenstellung der Einträge aller Docks), leer = Standard
+        public bool Derived = false;              // für ein weiteres Dock zusammengesetzt (ForDock): wird nie gespeichert
+
         public int Monitor = -1;                  // -1 = Hauptbildschirm, sonst Nummer in Screen.AllScreens
         public DockEdge Edge = DockEdge.Unten;
         public int EdgeDistance = 0;              // Abstand zum Bildschirmrand
@@ -47,7 +70,7 @@ namespace DockPilot
         public int LabelCustomColor = 0;          // ARGB, 0 = keine
         public int LabelShadow = 10;              // Schattenstärke (Deckkraft) 0 – 10 (× 10 %)
         public int LabelShadowSize = 3;           // Schattengröße: wie weit der Schatten um die Schrift reicht (1 – 8 px)
-        public int ZoomMode = 0;                  // 0 = automatisch, 1 = Blase, 2 = fest, 3 = anheben, 4 = aus, 5 = weiche Blase, 6 = leuchten, 7 = Fokus, 8 = federn
+        public int ZoomMode = 0;                  // Größen-Effekt: 0 = automatisch, 1 = Blase, 2 = Lupe (fest), 3 = anheben, 4 = aus, 5 = weiche Blase, 10 = pulsieren (6 – 9 und 11 – 15 waren früher die Hervorhebungen, siehe Highlight)
         public bool Reflection = false;           // Spiegelung unter den Symbolen (wie RocketDock)
         public bool KeepWidth = true;             // Blase: Leiste bleibt gleich breit (die übrigen Symbole rücken zusammen)
         public int KeepMode = 0;                  // Platz schaffen: 0 = übrige Symbole schrumpfen, 1 = überlappen (bleiben gleich groß)
@@ -59,6 +82,9 @@ namespace DockPilot
         public int ShelfRadius = 8;               // Eckenradius der Leiste (0 – 40 px), Windows 11: 8 px wie Fenster und Menüs
         public bool Labels = true;                // Beschriftung beim Überfahren
         public bool ShowRunning = true;           // Punkt unter laufenden Programmen
+        public int Highlight = 0;                 // Hervorhebung des Symbols unter der Maus, zusätzlich zum Zoom-Effekt: 0 = keine, 6 = leuchten, 7 = Fokus, 8 = federn, 9 = kippen, 11 = wackeln, 12 = Sockel, 13 = Unterstrich, 14 = entsättigen, 15 = einfärben
+        public int EffectStrength = 100;          // Stärke der Hervorhebung in Prozent (20 – 200)
+        public bool ShowUnpinned = false;         // laufende Programme ohne Dock-Eintrag vorübergehend am Ende zeigen
         public bool Preview = true;               // Fenstervorschau über laufenden Programmen (wie in der Taskleiste)
         public bool ActivateRunning = true;       // läuft das Programm schon: nur nach vorne holen
         public bool AutoHide = false;
@@ -87,16 +113,38 @@ namespace DockPilot
         public void CopyFrom(Settings o)
         {
             Monitor = o.Monitor; Edge = o.Edge; EdgeDistance = o.EdgeDistance; CenterPercent = o.CenterPercent;
-            IconSize = o.IconSize; ZoomSize = o.ZoomSize; ZoomWidth = o.ZoomWidth; ZoomMode = o.ZoomMode; Spacing = o.Spacing; Reflection = o.Reflection; KeepWidth = o.KeepWidth;
+            IconSize = o.IconSize; ZoomSize = o.ZoomSize; ZoomWidth = o.ZoomWidth; ZoomMode = o.ZoomMode; Highlight = o.Highlight; EffectStrength = o.EffectStrength; Spacing = o.Spacing; Reflection = o.Reflection; KeepWidth = o.KeepWidth;
             KeepMode = o.KeepMode; MinShrink = o.MinShrink; Reserve = o.Reserve; EdgeGrow = o.EdgeGrow;
             ShelfVisible = o.ShelfVisible; ShelfOpacity = o.ShelfOpacity; ShelfRadius = o.ShelfRadius;
             LabelSize = o.LabelSize; LabelBold = o.LabelBold; LabelFont = o.LabelFont; LabelColorMode = o.LabelColorMode; LabelCustomColor = o.LabelCustomColor; LabelShadow = o.LabelShadow; LabelShadowSize = o.LabelShadowSize;
-            Labels = o.Labels; ShowRunning = o.ShowRunning; ActivateRunning = o.ActivateRunning; Preview = o.Preview;
+            Labels = o.Labels; ShowRunning = o.ShowRunning; ShowUnpinned = o.ShowUnpinned; ActivateRunning = o.ActivateRunning; Preview = o.Preview;
             AutoHide = o.AutoHide; ShowDelay = o.ShowDelay; HideDelay = o.HideDelay;
             HideOnFullscreen = o.HideOnFullscreen; Locked = o.Locked; Animate = o.Animate;
             AnimSpeed = o.AnimSpeed; AlwaysOnTop = o.AlwaysOnTop; RaiseOnHover = o.RaiseOnHover;
             HotkeyModifiers = o.HotkeyModifiers; HotkeyKey = o.HotkeyKey;
             FirstRun = o.FirstRun; UpdateCheck = o.UpdateCheck; LastUpdateCheck = o.LastUpdateCheck; NavPinned = o.NavPinned;
+            for (int i = 0; i < ExtraDocks; i++) Extra[i] = o.Extra[i].Clone();
+            Profile = o.Profile;
+        }
+
+        /// <summary>
+        /// Einstellungen für ein weiteres Dock (2 oder 3): eine Kopie mit dessen Position und Symbolgröße.
+        /// Die Kopie lässt sich nicht speichern – gespeichert werden immer die gemeinsamen Einstellungen.
+        /// </summary>
+        public Settings ForDock(int number)
+        {
+            Settings c = Clone();
+            c.Derived = true;
+            int i = number - 2;
+            if (i < 0 || i >= ExtraDocks) return c;
+            DockPlace p = Extra[i];
+            c.Monitor = p.Monitor;
+            c.Edge = p.Edge;
+            c.EdgeDistance = p.EdgeDistance;
+            c.CenterPercent = p.CenterPercent;
+            c.IconSize = p.IconSize;
+            c.ZoomSize = Math.Max(p.IconSize, p.ZoomSize);
+            return c;
         }
 
         /// <summary>Schriftfarbe der Beschriftung nach Einstellung.</summary>
@@ -128,7 +176,10 @@ namespace DockPilot
             get { return Path.Combine(DataDirectory, "Dock Pilot.ini"); }
         }
 
-        /// <summary>Kopien importierter Symbole (PNG/ICO), damit RocketDock später entfernt werden kann.</summary>
+        /// <summary>
+        /// Eigene Symbole (PNG/ICO): Kopien der aus RocketDock übernommenen Symbole und Bilder, die nach dem Namen
+        /// des Eintrags oder Programms zugeordnet werden (siehe IconLoader.FromPack).
+        /// </summary>
         public static string IconDirectory
         {
             get { return Path.Combine(DataDirectory, "Symbole"); }
@@ -146,13 +197,19 @@ namespace DockPilot
             s.IconSize = Ini.GetInt(v, "Symbolgroesse", s.IconSize, 16, 128);
             s.ZoomSize = Ini.GetInt(v, "Zoomgroesse", s.ZoomSize, 16, 256);
             s.ZoomWidth = Ini.GetInt(v, "Zoombreite", s.ZoomWidth, 1, 6);
-            s.ZoomMode = Ini.GetInt(v, "ZoomArt", -1, -1, 8);
+            s.ZoomMode = Ini.GetInt(v, "ZoomArt", -1, -1, 15);
             if (s.ZoomMode < 0)
             {
                 // ältere Versionen: ZoomEffekt mit 3 = Hervorheben (entfallen), 4 = Anheben, 5 = Aus
                 int old = Ini.GetInt(v, "ZoomEffekt", 0, 0, 5);
                 s.ZoomMode = old == 3 ? 0 : old > 3 ? old - 1 : old;
             }
+            // Hervorhebung: früher ein Wert von ZoomArt, jetzt getrennt wählbar (Größen-Effekt + Hervorhebung)
+            bool wasHighlight = s.ZoomMode >= 6 && s.ZoomMode != 10;
+            s.Highlight = Ini.GetInt(v, "Hervorhebung", wasHighlight ? s.ZoomMode : 0, 0, 15);
+            if (s.Highlight < 6 || s.Highlight == 10) s.Highlight = 0;
+            if (wasHighlight) s.ZoomMode = 4;
+            s.EffectStrength = Ini.GetInt(v, "EffektStaerke", s.EffectStrength, 20, 200);
             s.Spacing = Ini.GetInt(v, "Symbolabstand", s.Spacing, 0, 30);
             s.LabelSize = Ini.GetInt(v, "SchriftGroesse", s.LabelSize, 9, 32);
             s.LabelBold = Ini.GetBool(v, "SchriftFett", s.LabelBold);
@@ -169,6 +226,7 @@ namespace DockPilot
             s.LabelShadowSize = Ini.GetInt(v, "SchriftSchattenGroesse", s.LabelShadowSize, 1, 8);
             s.Labels = Ini.GetBool(v, "Beschriftung", s.Labels);
             s.ShowRunning = Ini.GetBool(v, "LaufendeMarkieren", s.ShowRunning);
+            s.ShowUnpinned = Ini.GetBool(v, "LaufendeOhneEintrag", s.ShowUnpinned);
             s.Reflection = Ini.GetBool(v, "Spiegelung", s.Reflection);
             s.Preview = Ini.GetBool(v, "Fenstervorschau", s.Preview);
             s.KeepWidth = Ini.GetBool(v, "LeisteGleichBreit", s.KeepWidth);
@@ -194,6 +252,22 @@ namespace DockPilot
             s.FirstRun = Ini.GetBool(v, "ErsterStart", s.FirstRun);
             s.UpdateCheck = Ini.GetBool(v, "UpdatesPruefen", s.UpdateCheck);
             s.NavPinned = Ini.GetBool(v, "NavigationAngepinnt", s.NavPinned);
+            s.Profile = CleanProfile(Ini.Get(v, "Profil", ""));
+            for (int i = 0; i < ExtraDocks; i++)
+            {
+                DockPlace p = s.Extra[i];
+                string k = "Dock" + (i + 2);
+                p.Enabled = Ini.GetBool(v, k + "Aktiv", p.Enabled);
+                p.Monitor = Ini.GetInt(v, k + "Bildschirm", p.Monitor, -1, 16);
+                // noch nie eingestellt: Dock 2 gegenüber von Dock 1, Dock 3 an einer Seite – nicht genau auf Dock 1
+                if (!v.ContainsKey(k + "Rand"))
+                    p.Edge = i == 0 ? (DockEdge)((int)s.Edge ^ 1) : ((int)s.Edge >= 2 ? DockEdge.Oben : DockEdge.Links);
+                p.Edge = (DockEdge)Ini.GetInt(v, k + "Rand", (int)p.Edge, 0, 3);
+                p.EdgeDistance = Ini.GetInt(v, k + "AbstandRand", p.EdgeDistance, 0, 400);
+                p.CenterPercent = Ini.GetInt(v, k + "Zentrierung", p.CenterPercent, -100, 100);
+                p.IconSize = Ini.GetInt(v, k + "Symbolgroesse", p.IconSize, 16, 128);
+                p.ZoomSize = Ini.GetInt(v, k + "Zoomgroesse", p.ZoomSize, 16, 256);
+            }
             string last;
             if (v.TryGetValue("LetzteUpdatePruefung", out last)) s.LastUpdateCheck = last.Trim();
             if (s.ZoomSize < s.IconSize) s.ZoomSize = s.IconSize;
@@ -202,7 +276,17 @@ namespace DockPilot
 
         public void Save()
         {
+            if (Derived) return; // Kopie für ein weiteres Dock
             Ini.Write(DataPath, ToIniText());
+        }
+
+        /// <summary>Profilname als Ordnername: ohne unzulässige Zeichen, höchstens 40 Zeichen.</summary>
+        public static string CleanProfile(string name)
+        {
+            name = (name ?? "").Trim();
+            foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c.ToString(), "");
+            name = name.Trim(' ', '.');
+            return name.Length > 40 ? name.Substring(0, 40).Trim() : name;
         }
 
         /// <summary>Inhalt der Einstellungsdatei (auch zum Vergleichen, ob sich etwas geändert hat).</summary>
@@ -225,9 +309,12 @@ namespace DockPilot
             sb.AppendLine("Symbolgroesse=" + IconSize);
             sb.AppendLine("Zoomgroesse=" + ZoomSize);
             sb.AppendLine("Zoombreite=" + ZoomWidth);
-            sb.AppendLine("; Zoom-Effekt: 0 = automatisch, 1 = Blase, 2 = fest, 3 = hervorheben wie die Taskleiste, 4 = anheben, 5 = aus");
-            sb.AppendLine("; 0 automatisch, 1 Blase, 2 fest, 3 anheben, 4 aus, 5 weiche Blase, 6 leuchten, 7 Fokus, 8 federn");
+            sb.AppendLine("; Groessen-Effekt: 0 automatisch, 1 Blase, 2 Lupe, 3 anheben, 4 aus, 5 weiche Blase, 10 pulsieren");
             sb.AppendLine("ZoomArt=" + ZoomMode);
+            sb.AppendLine("; 0 = keine, 6 = leuchten, 7 = Fokus, 8 = federn, 9 = kippen, 11 = wackeln, 12 = Sockel, 13 = Unterstrich, 14 = entsaettigen, 15 = einfaerben");
+            sb.AppendLine("Hervorhebung=" + Highlight);
+            sb.AppendLine("; Staerke der Hervorhebung in Prozent (20 - 200)");
+            sb.AppendLine("EffektStaerke=" + EffectStrength);
             sb.AppendLine("Symbolabstand=" + Spacing);
             sb.AppendLine("[Beschriftung]");
             sb.AppendLine("SchriftGroesse=" + LabelSize);
@@ -242,6 +329,7 @@ namespace DockPilot
             sb.AppendLine("SchriftSchattenGroesse=" + LabelShadowSize);
             sb.AppendLine("Beschriftung=" + B(Labels));
             sb.AppendLine("LaufendeMarkieren=" + B(ShowRunning));
+            sb.AppendLine("LaufendeOhneEintrag=" + B(ShowUnpinned));
             sb.AppendLine("Spiegelung=" + B(Reflection));
             sb.AppendLine("Fenstervorschau=" + B(Preview));
             sb.AppendLine("LeisteGleichBreit=" + B(KeepWidth));
@@ -272,6 +360,22 @@ namespace DockPilot
             sb.AppendLine("UpdatesPruefen=" + B(UpdateCheck));
             sb.AppendLine("LetzteUpdatePruefung=" + LastUpdateCheck);
             sb.AppendLine("NavigationAngepinnt=" + B(NavPinned));
+            sb.AppendLine("; aktives Profil (Einträge aller Docks), leer = Standard");
+            sb.AppendLine("Profil=" + Profile);
+            sb.AppendLine("[WeitereDocks]");
+            sb.AppendLine("; Dock 2 und 3: eigene Einträge (Dock2.ini, Dock3.ini), eigene Position und Symbolgröße");
+            for (int i = 0; i < ExtraDocks; i++)
+            {
+                DockPlace p = Extra[i];
+                string k = "Dock" + (i + 2);
+                sb.AppendLine(k + "Aktiv=" + B(p.Enabled));
+                sb.AppendLine(k + "Bildschirm=" + p.Monitor);
+                sb.AppendLine(k + "Rand=" + (int)p.Edge);
+                sb.AppendLine(k + "AbstandRand=" + p.EdgeDistance);
+                sb.AppendLine(k + "Zentrierung=" + p.CenterPercent);
+                sb.AppendLine(k + "Symbolgroesse=" + p.IconSize);
+                sb.AppendLine(k + "Zoomgroesse=" + p.ZoomSize);
+            }
             return sb.ToString();
         }
 
@@ -296,6 +400,9 @@ namespace DockPilot
         public bool FilesOnly = false;    // nur Ordnermenü: keine Unterordner anzeigen
         public int Sort = 0;              // nur Ordnermenü: 0 Name A–Z, 1 Name Z–A, 2 neueste zuerst, 3 älteste zuerst, 4 eigene Reihenfolge
         public string Order = "";         // nur Ordnermenü, eigene Reihenfolge: Pfade relativ zum Ordner, getrennt mit „|“
+        public int HotkeyModifiers = 0;   // eigenes Tastenkürzel: startet den Eintrag bzw. holt sein Fenster nach vorne (wie ein Klick)
+        public int HotkeyKey = 0;         // 0 = keins
+        public bool Temp = false;         // laufendes Programm ohne eigenen Eintrag: nur vorübergehend im Dock, wird nicht gespeichert
 
         public DockItem Clone()
         {
@@ -308,9 +415,44 @@ namespace DockPilot
     /// <summary>Die Einträge des Docks, gespeichert als %LOCALAPPDATA%\Dock Pilot\Dock.ini (ein Abschnitt je Eintrag).</summary>
     internal static class DockStore
     {
+        /// <summary>Aktives Profil (leer = Standard): bestimmt, aus welchem Ordner die Einträge aller Docks kommen.</summary>
+        public static string Profile = "";
+
+        /// <summary>Ordner aller Profile außer dem Standardprofil (je Profil ein Unterordner).</summary>
+        public static string ProfilesDirectory
+        {
+            get { return Path.Combine(Settings.DataDirectory, "Profile"); }
+        }
+
+        /// <summary>Ordner mit den Einträgen eines Profils (leer = Standard: der Datenordner selbst).</summary>
+        public static string DirectoryOf(string profile)
+        {
+            return string.IsNullOrEmpty(profile) ? Settings.DataDirectory : Path.Combine(ProfilesDirectory, profile);
+        }
+
+        /// <summary>Datei mit den Einträgen eines Docks im aktiven Profil: Dock.ini, Dock2.ini, Dock3.ini.</summary>
+        public static string FileFor(int dock)
+        {
+            return Path.Combine(DirectoryOf(Profile), dock <= 1 ? "Dock.ini" : "Dock" + dock + ".ini");
+        }
+
+        /// <summary>Namen der vorhandenen Profile (ohne das Standardprofil), sortiert.</summary>
+        public static List<string> Profiles()
+        {
+            List<string> list = new List<string>();
+            try
+            {
+                if (Directory.Exists(ProfilesDirectory))
+                    foreach (string d in Directory.GetDirectories(ProfilesDirectory)) list.Add(Path.GetFileName(d));
+            }
+            catch { }
+            list.Sort(StringComparer.CurrentCultureIgnoreCase);
+            return list;
+        }
+
         public static string FilePath
         {
-            get { return Path.Combine(Settings.DataDirectory, "Dock.ini"); }
+            get { return FileFor(1); }
         }
 
         public static bool Exists
@@ -318,10 +460,20 @@ namespace DockPilot
             get { return File.Exists(FilePath); }
         }
 
+        public static bool ExistsFor(int dock)
+        {
+            return File.Exists(FileFor(dock));
+        }
+
         public static List<DockItem> Load()
         {
+            return Load(1);
+        }
+
+        public static List<DockItem> Load(int dock)
+        {
             List<DockItem> list = new List<DockItem>();
-            List<KeyValuePair<string, Dictionary<string, string>>> sections = Ini.ReadSections(FilePath);
+            List<KeyValuePair<string, Dictionary<string, string>>> sections = Ini.ReadSections(FileFor(dock));
             if (sections == null) return list;
             foreach (KeyValuePair<string, Dictionary<string, string>> sec in sections)
             {
@@ -342,6 +494,8 @@ namespace DockPilot
                 it.FilesOnly = Ini.GetBool(v, "NurDateien", false);
                 it.Sort = Ini.GetInt(v, "Sortierung", 0, 0, 4);
                 it.Order = Ini.Get(v, "Reihenfolge", "");
+                it.HotkeyModifiers = Ini.GetInt(v, "KuerzelZusatz", 0, 0, 15);
+                it.HotkeyKey = Ini.GetInt(v, "KuerzelTaste", 0, 0, 255);
                 list.Add(it);
             }
             return list;
@@ -349,14 +503,21 @@ namespace DockPilot
 
         public static void Save(List<DockItem> items)
         {
+            Save(items, 1);
+        }
+
+        public static void Save(List<DockItem> items, int dock)
+        {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("; Dock Pilot - Eintraege im Dock (Reihenfolge = Reihenfolge der Abschnitte)");
             sb.AppendLine("; Art: Programm, Trennlinie oder Ordnermenue. Symbol: leer = Symbol des Ziels, sonst Datei oder Datei?Index");
+            int number = 0;
             for (int i = 0; i < items.Count; i++)
             {
                 DockItem it = items[i];
+                if (it.Temp) continue; // nur vorübergehend im Dock
                 sb.AppendLine();
-                sb.AppendLine("[Eintrag" + (i + 1).ToString("000") + "]");
+                sb.AppendLine("[Eintrag" + (++number).ToString("000") + "]");
                 if (it.Kind == ItemKind.Trennlinie)
                 {
                     sb.AppendLine("Art=Trennlinie");
@@ -381,8 +542,14 @@ namespace DockPilot
                     sb.AppendLine("AlsAdministrator=" + (it.RunAsAdmin ? "1" : "0"));
                 }
                 sb.AppendLine("Symbol=" + Ini.Clean(it.Icon));
+                if (it.HotkeyKey > 0)
+                {
+                    sb.AppendLine("KuerzelZusatz=" + it.HotkeyModifiers);
+                    sb.AppendLine("KuerzelTaste=" + it.HotkeyKey);
+                }
             }
-            Ini.Write(FilePath, sb.ToString());
+            try { Directory.CreateDirectory(DirectoryOf(Profile)); } catch { }
+            Ini.Write(FileFor(dock), sb.ToString());
         }
     }
 

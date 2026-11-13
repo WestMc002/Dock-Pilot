@@ -18,20 +18,83 @@ Symbole größer, der Name erscheint daneben.
   den Fenstertiteln.
 - Ein kleiner Strich in der Akzentfarbe markiert laufende Programme.
 - Nach dem Start hüpft das Symbol kurz.
+- Mausrad auf einem laufenden Programm: blättert durch seine Fenster.
+- Will ein Fenster Aufmerksamkeit (es blinkt in der Taskleiste), hüpft sein
+  Symbol und der Strich darunter leuchtet orange, bis das Fenster aktiviert
+  wird.
+- Laufende Programme ohne Eintrag (Einstellungen > Symbole > "Laufende ohne
+  Eintrag anzeigen", anfangs aus): Sie erscheinen wie in der Taskleiste
+  vorübergehend am Ende des Docks und verschwinden, wenn sie beendet werden.
+  Rechtsklick > "Im Dock behalten" macht daraus einen festen Eintrag.
+- Zuletzt verwendet: Rechtsklick auf ein Programm > "Zuletzt verwendet" zeigt
+  die Dateien, die zuletzt mit diesem Programm geöffnet wurden. Dock Pilot
+  liest dafür die Sprungliste, die Windows für das Programm führt. Gibt es
+  keine (z. B. bei Programmen mit eigener Kennung wie Office oder Browsern),
+  nimmt es die Windows-Liste "Zuletzt verwendet" und zeigt daraus die
+  Dateitypen, die Windows mit diesem Programm öffnet.
+- Papierkorb: Liegt der Papierkorb im Dock, zeigt sein Symbol, ob er leer oder
+  voll ist. Rechtsklick > "Papierkorb leeren" leert ihn (Windows fragt nach).
+- Wird Dock Pilot ein zweites Mal gestartet, blendet sich nur das Dock ein.
+
+Profile
+--------
+Ein Profil ist eine Zusammenstellung von Einträgen für alle Docks – ähnlich
+wie mehrere Desktops in Windows, z. B. "Arbeit" und "Privat". Die
+Einstellungen (Position, Aussehen, Verhalten) bleiben dabei gleich.
+Rechtsklick auf das Tray-Symbol > "Profil": zwischen den Profilen wechseln,
+ein neues anlegen (es beginnt mit den Einträgen des aktuellen) oder das
+aktive löschen (der Ordner kommt in den Papierkorb). Das Profil "Standard"
+gibt es immer.
+
+Mit der Tastatur
+----------------
+Blendet das Tastenkürzel (Einstellungen > Verhalten) das Dock ein, lässt es
+sich sofort mit der Tastatur bedienen:
+    Pfeiltasten, Tab      nächstes bzw. voriges Symbol
+    Pos1, Ende            erstes bzw. letztes Symbol
+    Buchstabe             nächster Eintrag, der so beginnt
+    Enter, Leertaste      starten (Umschalt + Enter: noch einmal starten)
+    Menütaste, Umschalt + F10   Kontextmenü
+    Esc                   zurück zum vorigen Fenster
+Eine Mausbewegung oder 15 Sekunden ohne Taste beenden die Tastatursteuerung
+ebenfalls; das vorher aktive Fenster bekommt die Tastatur zurück.
 
 Einträge hinzufügen und ändern
 ------------------------------
 - Programme, Verknüpfungen, Dateien und Ordner aus dem Explorer ins Dock ziehen.
   Eine blaue Linie zeigt, wo der Eintrag landet.
 - Dateien auf die Mitte eines Programms ziehen: Das Programm öffnet die Dateien.
+- Dateien oder Programme auf ein Ordnermenü ziehen: Im Ordner entsteht eine
+  Verknüpfung dorthin (Verknüpfungen selbst werden kopiert).
+- Und wieder heraus: Im offenen Ordnermenü einen Eintrag mit der Maus aus dem
+  Menü ziehen. Über dem Dock losgelassen, wird er zum Dock-Eintrag (blaue
+  Linie); woanders losgelassen (rotes Kreuz an der Maus), wird er nur entfernt.
+  Die Datei im Ordner kommt dabei in den Papierkorb und lässt sich von dort
+  wiederherstellen. Bei "Einträge sperren" geht das nicht.
+  Mehrere auf einmal: Einträge mit Strg + Klick markieren, dann einen davon
+  herausziehen. Unterordner kommen erst nach einer Rückfrage in den
+  Papierkorb. Ins Dock gezogen, bleiben Unterordner und echte Dateien im
+  Ordner liegen (der Dock-Eintrag zeigt auf sie); nur Verknüpfungen wandern.
 - Rechtsklick ins Dock:
-    Eigenschaften …          Name, Ziel, Parameter, Fenster, Symbol
+    Eigenschaften …          Name, Ziel, Parameter, Fenster, Symbol und ein
+                             eigenes Tastenkürzel, das den Eintrag von überall
+                             startet bzw. sein Fenster nach vorne holt
     Aus dem Dock entfernen
     Programm oder Datei hinzufügen …
     Ordnermenü hinzufügen …  Ordner als aufklappbares Menü (Ersatz für KkMenu)
     Trennlinie einfügen
 - Reihenfolge ändern: Symbol mit der Maus an die neue Stelle ziehen
   (nicht, wenn "Einträge sperren" eingeschaltet ist).
+- Entfernen: Symbol aus dem Dock herausziehen (es erscheint mit rotem Kreuz
+  an der Maus) und loslassen – wie bei RocketDock. Zurück ins Dock gezogen,
+  bleibt es erhalten. Auch das nicht bei "Einträge sperren".
+- Versehentlich entfernt? Rechtsklick ins Dock > "Entfernen rückgängig" holt
+  den zuletzt entfernten Eintrag an seine alte Stelle zurück (bis Dock Pilot
+  beendet wird). Das gilt auch für Verknüpfungen, die aus einem Ordnermenü
+  herausgezogen und entfernt wurden – nicht für Unterordner und große
+  Dateien, die liegen nur im Papierkorb.
+- Beim Einfügen, Entfernen und Verschieben gleiten die Symbole an ihren Platz
+  (nicht, wenn die Animationen ausgeschaltet sind).
 
 Ordnermenüs
 -----------
@@ -47,6 +110,9 @@ Verknüpfungen einfach in den Ordner legen – sie erscheinen beim nächsten Öf
 Ein offenes Ordnermenü klappt zu, wenn man woanders hinklickt, Esc drückt oder
 die Maus Menü und Dock eine Sekunde lang verlässt. Fährt man im Dock auf ein
 anderes Ordnermenü, wechselt es direkt dorthin.
+Im offenen Menü tippen: Die Auswahl springt zum ersten Eintrag, der so beginnt
+(sonst zu einem, der die Buchstaben enthält). Derselbe Buchstabe noch einmal
+springt zum nächsten Treffer, Enter öffnet ihn.
 
 RocketDock übernehmen
 ---------------------
@@ -61,7 +127,9 @@ Autostart nehmen.
 Einstellungen
 -------------
 Klick auf das Tray-Symbol oder Rechtsklick ins Dock > Einstellungen. Änderungen
-gelten erst nach "Speichern".
+zeigt das Dock sofort als Vorschau; gespeichert werden sie erst mit
+"Speichern". "Abbrechen" oder Schließen ohne Speichern stellt den alten Stand
+wieder her (das Tastenkürzel wird erst mit dem Speichern umgestellt).
 Die Seiten wählt man links in der Navigation. ☰ klappt sie ein und aus, die
 Stecknadel pinnt sie an (angepinnt bleibt sie offen, sonst klappt sie nach der
 Auswahl wieder ein). Nicht angepinnt klappt sie auch aus, wenn die Maus kurz
@@ -70,25 +138,50 @@ Fehlerprotokoll, Sichern und Wiederherstellen sowie Standardwerte.
 - Position: Bildschirm, Rand (oben, unten, links, rechts), Abstand, Zentrierung
   (-100 % bis 100 %), immer im Vordergrund oder Fenster dürfen das Dock
   überdecken (dann holt die Maus es auf Wunsch nach vorne)
+- Weitere Docks: Neben dem ersten Dock gibt es bis zu zwei weitere (Dock 2
+  und Dock 3), z. B. für einen anderen Bildschirm. Jedes lässt sich ein- und
+  ausschalten und hat eigene Einträge, einen eigenen Bildschirm, Rand,
+  Abstand, eine eigene Zentrierung und Symbolgröße. Alles andere – Effekte,
+  Beschriftung, Verhalten – gilt für alle Docks gemeinsam. Ein neues Dock
+  beginnt mit einem Eintrag "Explorer"; weitere per Rechtsklick oder Ziehen.
+  Zwei Docks am selben Rand desselben Bildschirms liegen übereinander – beim
+  Einschalten schlägt Dock Pilot deshalb einen freien Rand vor.
+  Das Tastenkürzel blendet alle Docks ein und aus, die Tastatursteuerung und
+  "Laufende ohne Eintrag" gibt es nur im ersten Dock.
 - Symbole: Größe, Abstand zwischen den Symbolen, laufende Programme
-  markieren, Fenstervorschau, Spiegelung; Leiste anzeigen (aus = nur Symbole), Deckkraft und
+  markieren, laufende ohne Eintrag anzeigen, Fenstervorschau, Spiegelung; Leiste anzeigen (aus = nur Symbole), Deckkraft und
   Eckenradius der Leiste
-- Zoom: Zoom-Effekt (automatisch, Blase, weiche Blase, fest, anheben,
-  leuchten, Fokus, federn, aus), Größe unter der Maus, wie viele Nachbarn
+- Zoom: Zoom-Effekt, also wie die Symbole unter der Maus größer werden
+  (automatisch, Blase, weiche Blase, Lupe, anheben, pulsieren, aus), Größe
+  unter der Maus, wie viele Nachbarn
   mitwachsen. Bei Blase "Leiste bleibt gleich breit": Die übrigen Symbole
   machen Platz, indem sie schrumpfen oder sich überlappen (mindestens so groß
   bzw. so weit sichtbar wie eingestellt). "Reserve an den Enden" macht die
   Leiste etwas länger, die Blase nutzt zuerst diesen Platz. "Am Ende
   hinauswachsen": am ersten und letzten Symbol wächst die Leiste dort etwas
   hinaus.
+- Effekte: Hervorhebung des Symbols unter der Maus, zusätzlich zum
+  Zoom-Effekt (keine, leuchten, Sockel, Unterstrich, einfärben, kippen,
+  wackeln, federn, Fokus, entsättigen) und ihre Stärke in Prozent. Darunter
+  zeigt ein kleines Beispiel-Dock Zoom-Effekt und Hervorhebung sofort.
 - Beschriftung: ein/aus, Schriftart (Standard: Schrift von Windows), Schriftgröße, fett, Farbe (weiß, schwarz, wie
   Windows, Akzentfarbe oder eigene Farbe), Stärke und Größe des Schattens
 - Verhalten: automatisch ausblenden (mit Verzögerung), bei Vollbild ausblenden
   (Spiele, Videos), laufende Programme nach vorne holen, Einträge sperren,
   Animationen (aus, schnell, normal, langsam), Tastenkürzel zum Ein- und
   Ausblenden
-- Allgemein: mit Windows starten, RocketDock übernehmen, Datenordner öffnen
-- Extras: Dock und Einstellungen in eine Datei sichern (*.dockpilot) und
+- Allgemein: mit Windows starten, RocketDock übernehmen, Datenordner öffnen,
+  Ordner mit den eigenen Symbolen öffnen
+
+Eigene Symbole
+--------------
+Eigene Symbole, ohne jeden Eintrag einzeln zu ändern: Bilder (PNG oder ICO) in
+den Ordner "Symbole" legen (Einstellungen > Allgemein > Eigene Symbole). Heißt
+ein Bild wie der Eintrag im Dock oder wie sein Programm – z. B. "Editor.png"
+oder "notepad.ico" –, ersetzt es das Programmsymbol. Ein in den Eigenschaften
+gewähltes Symbol hat Vorrang. Neue Bilder gelten nach einem Neustart von
+Dock Pilot. Im selben Ordner liegen die aus RocketDock übernommenen Symbole.
+- Extras: Docks (aktives Profil) und Einstellungen in eine Datei sichern (*.dockpilot) und
   wiederherstellen, z. B. für einen zweiten PC. Beim Wiederherstellen bleiben
   die bisherigen Dateien als ".vor-import" im Datenordner liegen.
   "Standardwerte" setzt alle Seiten zurück, gilt aber erst nach "Speichern".
@@ -102,7 +195,9 @@ Daten
   Dock Pilot.ini   Einstellungen
   Dock.ini         Einträge (ein Abschnitt je Eintrag, lässt sich auch von Hand
                    bearbeiten, solange Dock Pilot beendet ist)
-  Symbole\         übernommene eigene Symbole
+  Dock2.ini, Dock3.ini   Einträge der weiteren Docks
+  Profile\<Name>\  die gleichen Dateien je Profil (außer "Standard")
+  Symbole\         eigene Symbole (übernommene und nach Namen zugeordnete)
   Fehler.log       technische Details bei Fehlern
 
 Updates
