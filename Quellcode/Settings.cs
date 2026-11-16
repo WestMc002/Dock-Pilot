@@ -99,7 +99,8 @@ namespace DockPilot
         public int HotkeyModifiers = 0;           // MOD_ALT 1, MOD_CONTROL 2, MOD_SHIFT 4, MOD_WIN 8
         public int HotkeyKey = 0;                 // 0 = kein Tastenkürzel
         public bool FirstRun = true;
-        public bool UpdateCheck = true;           // beim Start auf GitHub nach neuen Versionen sehen (höchstens alle 20 Stunden)
+        public bool UpdateCheck = true;           // kurz nach jedem Start (und alle 6 Stunden) auf GitHub nach neuen Versionen sehen
+        public bool AutoInstall = false;          // neue Version ohne Rückfrage installieren, sobald Dock Pilot nicht beschäftigt ist
         public string LastUpdateCheck = "";       // Zeitpunkt der letzten erfolgreichen Prüfung (UTC, ISO 8601)
         public bool NavPinned = true;             // Einstellungsfenster: Navigation angepinnt (wird sofort gespeichert)
 
@@ -122,7 +123,7 @@ namespace DockPilot
             HideOnFullscreen = o.HideOnFullscreen; Locked = o.Locked; Animate = o.Animate;
             AnimSpeed = o.AnimSpeed; AlwaysOnTop = o.AlwaysOnTop; RaiseOnHover = o.RaiseOnHover;
             HotkeyModifiers = o.HotkeyModifiers; HotkeyKey = o.HotkeyKey;
-            FirstRun = o.FirstRun; UpdateCheck = o.UpdateCheck; LastUpdateCheck = o.LastUpdateCheck; NavPinned = o.NavPinned;
+            FirstRun = o.FirstRun; UpdateCheck = o.UpdateCheck; AutoInstall = o.AutoInstall; LastUpdateCheck = o.LastUpdateCheck; NavPinned = o.NavPinned;
             for (int i = 0; i < ExtraDocks; i++) Extra[i] = o.Extra[i].Clone();
             Profile = o.Profile;
         }
@@ -251,6 +252,7 @@ namespace DockPilot
             s.HotkeyKey = Ini.GetInt(v, "TastenkuerzelTaste", s.HotkeyKey, 0, 254);
             s.FirstRun = Ini.GetBool(v, "ErsterStart", s.FirstRun);
             s.UpdateCheck = Ini.GetBool(v, "UpdatesPruefen", s.UpdateCheck);
+            s.AutoInstall = Ini.GetBool(v, "AutomatischAktualisieren", s.AutoInstall);
             s.NavPinned = Ini.GetBool(v, "NavigationAngepinnt", s.NavPinned);
             s.Profile = CleanProfile(Ini.Get(v, "Profil", ""));
             for (int i = 0; i < ExtraDocks; i++)
@@ -356,8 +358,10 @@ namespace DockPilot
             sb.AppendLine("TastenkuerzelTaste=" + HotkeyKey);
             sb.AppendLine("[Allgemein]");
             sb.AppendLine("ErsterStart=" + B(FirstRun));
-            sb.AppendLine("; Beim Start auf GitHub nach einer neuen Version sehen, hoechstens alle 20 Stunden (1 = ja)");
+            sb.AppendLine("; Kurz nach jedem Start (und alle 6 Stunden) auf GitHub nach einer neuen Version sehen (1 = ja)");
             sb.AppendLine("UpdatesPruefen=" + B(UpdateCheck));
+            sb.AppendLine("; Neue Version ohne Rueckfrage installieren, sobald Dock Pilot nicht beschaeftigt ist (1 = ja)");
+            sb.AppendLine("AutomatischAktualisieren=" + B(AutoInstall));
             sb.AppendLine("LetzteUpdatePruefung=" + LastUpdateCheck);
             sb.AppendLine("NavigationAngepinnt=" + B(NavPinned));
             sb.AppendLine("; aktives Profil (Einträge aller Docks), leer = Standard");

@@ -131,6 +131,7 @@ namespace DockPilot
             Settings d = new Settings();
             d.FirstRun = false;
             d.UpdateCheck = _edit.UpdateCheck;
+            d.AutoInstall = _edit.AutoInstall;
             d.LastUpdateCheck = _edit.LastUpdateCheck;
             d.NavPinned = _edit.NavPinned;
             _edit.CopyFrom(d);
@@ -139,7 +140,7 @@ namespace DockPilot
         }
 
         /// <summary>Gibt es Änderungen, die noch nicht gespeichert sind? (Zustand der Felder mit dem gespeicherten vergleichen)</summary>
-        private bool HasChanges()
+        internal bool HasChanges()
         {
             return _baseline != null && (Snapshot() != _baseline || _autostart.Checked != _autostartLoaded);
         }
@@ -154,6 +155,7 @@ namespace DockPilot
             _edit.FirstRun = _original.FirstRun;
             _edit.LastUpdateCheck = _original.LastUpdateCheck;
             _edit.UpdateCheck = _original.UpdateCheck;
+            _edit.AutoInstall = _original.AutoInstall;
             _edit.NavPinned = _original.NavPinned;
             _edit.Profile = _original.Profile; // wird im Tray-Menü umgeschaltet
             return _edit.ToIniText();

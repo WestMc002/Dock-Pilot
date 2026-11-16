@@ -202,7 +202,25 @@ Daten
 
 Updates
 -------
-Dock Pilot sieht beim Start auf GitHub nach einer neuen Version (höchstens alle
-20 Stunden, abschaltbar im Info-Fenster).
+Kurz nach jedem Start (nach etwa 15 Sekunden) wird still auf GitHub geprüft, ob es
+eine neue Version gibt; läuft Dock Pilot länger, wird alle 6 Stunden nachgesehen
+(dann höchstens einmal täglich):
+https://github.com/WestMc002/Dock-Pilot/releases
+Gibt es eine, erscheinen ein Hinweis im Infobereich (Klick darauf startet das
+Update), im Tray-Menü oben der Eintrag "Update auf <Version> installieren …" und
+im Einstellungsfenster oben eine Hinweisleiste. Beim Aktualisieren bleiben
+Einträge und Einstellungen erhalten. Im Fenster "Info über Dock Pilot" stehen
+unter "Updates" der Stand und das Datum der letzten Prüfung; "Jetzt prüfen"
+prüft sofort. Mit dem Schalter "Automatisch prüfen" lässt sich die Prüfung
+abschalten.
+
+Automatisch aktualisieren (Schalter im Fenster "Info über Dock Pilot", Standard
+aus, nur zusammen mit "Automatisch prüfen"): Findet die Prüfung eine neue Version,
+wird sie ohne Rückfrage installiert – aber erst, wenn Dock Pilot gerade nicht
+beschäftigt ist (kein Menü offen, kein Symbol wird gezogen, keine ungespeicherten
+Einstellungen, kein Dialog offen); sonst wird es alle 5 Minuten erneut versucht.
+Dock Pilot startet danach von selbst neu, im Infobereich bzw. mit offenem
+Einstellungsfenster, wenn es vorher offen war. Liegt Dock Pilot unter "Programme",
+fragt Windows bei jedem Update nach Administratorrechten.
 
 Autor: Günther Schoder · www.westmc002.de

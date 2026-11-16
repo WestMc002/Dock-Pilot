@@ -102,6 +102,9 @@ namespace DockPilot
         private bool _hotkeyOk = true;
         private bool _dark;
         private ContextMenuStrip _lastMenu;
+
+        /// <summary>Gerade in Benutzung (Menü offen, Symbol wird gezogen, Tastatursteuerung): kein automatisches Update.</summary>
+        public bool Busy { get { return _menuOpen || _dragging || _extDrag || _keyMode; } }
         private ContextMenuStrip _openMenu;            // offenes Menü des Docks (klappt zu, wenn die Maus weg ist)
         private ContextMenuStrip _folderMenu;          // offenes Ordnermenü (für Wechseln auf ein anderes)
         private int _folderIndex = -1, _switchTo = -1;

@@ -24,6 +24,9 @@ namespace DockPilot
 
         /// <summary>Startet das Selbst-Update (vom Tray gesetzt; läuft erst nach dem Schließen des Info-Fensters).</summary>
         public static Action StartInstall;
+
+        /// <summary>„Automatisch aktualisieren“ eingeschaltet bzw. Info-Fenster geschlossen (vom Tray gesetzt): Update versuchen.</summary>
+        public static Action AutoInstallChanged;
         private readonly float k;
         private readonly DialogButton _close;
 
@@ -41,7 +44,11 @@ namespace DockPilot
                     if (owner != null && owner.Visible) d.ShowDialog(owner);
                     else d.ShowDialog();
                 }
-                finally { _open = null; }
+                finally
+                {
+                    _open = null;
+                    if (AutoInstallChanged != null && !Demo.Active) AutoInstallChanged();
+                }
             }
         }
 
@@ -124,7 +131,7 @@ namespace DockPilot
             Settings settings = Demo.Active || LiveSettings == null ? new Settings() : LiveSettings;
             InfoCard card = new InfoCard(k, _card, _border, _back);
             card.Location = new Point(S(24), y);
-            card.Size = new Size(W - S(48), S(18) * 2 + rowCount * S(26) + S(49) + S(32)); // + Zeilen Updates und Automatisch prüfen
+            card.Size = new Size(W - S(48), S(18) * 2 + rowCount * S(26) + S(49) + S(32) + S(32)); // + Zeilen Updates, Automatisch prüfen und Automatisch aktualisieren
             ToolTip tip = new ModernToolTip();
             for (int i = 0; i < rowCount; i++)
             {
@@ -375,7 +382,42 @@ namespace DockPilot
             autoText.Click += delegate { auto.Checked = !auto.Checked; };
             card.Controls.Add(autoText);
 
-            // Details auf-/zuklappen: Die Zeile „Automatisch prüfen“, die Karte, alles darunter und das Fenster
+            // Automatisch aktualisieren: direkt darunter, nur bedienbar, wenn „Automatisch prüfen“ an ist
+            int iy = ay + S(32);
+            ToggleSwitch autoInstall = new ToggleSwitch();
+            autoInstall.Size = new Size(S(44), S(22));
+            autoInstall.Location = new Point(right - S(2) - autoInstall.Width, iy + (S(32) - autoInstall.Height) / 2);
+            autoInstall.BackColor = _card;
+            autoInstall.Checked = !Demo.Active && settings.AutoInstall;
+            card.Controls.Add(autoInstall);
+            Label installText = new Label();
+            installText.Text = "Automatisch aktualisieren";
+            installText.BackColor = _card;
+            installText.TextAlign = ContentAlignment.MiddleLeft;
+            installText.AutoEllipsis = true;
+            installText.Cursor = Cursors.Hand;
+            installText.Bounds = new Rectangle(x0, iy, autoInstall.Left - S(8) - x0, S(32));
+            installText.Click += delegate { if (autoInstall.Enabled) autoInstall.Checked = !autoInstall.Checked; };
+            card.Controls.Add(installText);
+            string installTip = "Eine neue Version ohne Rückfrage installieren, sobald Dock Pilot nicht beschäftigt ist. " +
+                "Dock Pilot startet danach von selbst neu (im Infobereich, wenn das Fenster vorher zu war).";
+            tip.SetToolTip(autoInstall, installTip);
+            tip.SetToolTip(installText, installTip);
+            MethodInvoker syncInstall = delegate
+            {
+                autoInstall.Enabled = auto.Checked;
+                installText.ForeColor = auto.Checked ? _text : _muted;
+            };
+            syncInstall();
+            auto.CheckedChanged += delegate { syncInstall(); };
+            autoInstall.CheckedChanged += delegate
+            {
+                if (Demo.Active || LiveSettings == null) return;
+                settings.AutoInstall = autoInstall.Checked; // gilt sofort und wird gespeichert
+                settings.Save();
+            };
+
+            // Details auf-/zuklappen: Die Zeilen „Automatisch prüfen“ und „Automatisch aktualisieren“, die Karte, alles darunter und das Fenster
             // rücken um die Höhe des Felds
             bool expanded = false;
             int grown = 0;
@@ -399,6 +441,8 @@ namespace DockPilot
                 more.Width = TextRenderer.MeasureText(more.Text, more.Font).Width + S(2);
                 auto.Top += d;
                 autoText.Top += d;
+                autoInstall.Top += d;
+                installText.Top += d;
                 card.Height += d;
                 foreach (Control c in Controls)
                     if (c != card && c.Top > card.Top) c.Top += d;

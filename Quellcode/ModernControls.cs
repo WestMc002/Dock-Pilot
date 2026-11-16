@@ -854,7 +854,9 @@ namespace DockPilot
                 Size s1 = TextRenderer.MeasureText(g, Name1, f1, Size.Empty, flags);
                 Size s2 = TextRenderer.MeasureText(g, Name2, f2, Size.Empty, flags);
                 int tw = Math.Max(s1.Width, s2.Width);
-                int gap = (int)(2 * k);
+                // Die beiden Zeilen überlappen um 3 × Skalierung (globale Vorgabe): Die mit NoPadding gemessene
+                // Schrifthöhe enthält oben und unten Leerraum, sonst wirkt der Textblock höher als das Logo
+                int gap = -(int)Math.Round(3 * k);
                 int th = s1.Height + gap + s2.Height;
                 int top = (Height - th) / 2;
                 int tx = right - tw;

@@ -488,6 +488,7 @@ namespace DockPilot
             _edit.FirstRun = _original.FirstRun;
             _edit.LastUpdateCheck = _original.LastUpdateCheck;
             _edit.UpdateCheck = _original.UpdateCheck; // wird im Info-Fenster eingestellt
+            _edit.AutoInstall = _original.AutoInstall;
             _edit.Profile = _original.Profile;         // wird im Tray-Menü umgeschaltet
             bool autoWanted = _autostart.Checked;
             _original.CopyFrom(_edit);

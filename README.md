@@ -39,7 +39,7 @@ The program interface is in German.
 - **Windows 11 look:** background like an active window (Mica), light/dark mode, Windows accent color, menus in Windows 11 style
 - **Import from RocketDock:** entries, separators, folder menus, custom icons, sizes, position, auto-hide and hotkey from RocketDock's `Settings.ini`
 - **Backup:** save entries, settings and icons to one file and restore them, e.g. on a second PC
-- **Updates:** checks GitHub for a new version at startup (at most every 20 hours) and updates itself with one click – settings are kept
+- **Updates:** checks GitHub for a new version shortly after every start (and every 6 hours while running) and updates itself with one click – or automatically without asking, if you switch on "Automatisch aktualisieren" (off by default); settings are kept
 - **No installation:** extract and start – settings are stored in `%LOCALAPPDATA%\Dock Pilot`
 
 ### Installation
@@ -83,7 +83,7 @@ Programmleiste am Bildschirmrand – ein moderner Nachfolger des bekannten Rocke
 - **Windows-11-Design:** Hintergrund wie ein aktives Fenster (Mica), Hell/Dunkel, Windows-Akzentfarbe, Menüs im Windows-11-Stil
 - **RocketDock übernehmen:** Einträge, Trennlinien, Ordnermenüs, eigene Symbole, Größen, Position, automatisches Ausblenden und Tastenkürzel aus der `Settings.ini` von RocketDock
 - **Sicherung:** Einträge, Einstellungen und Symbole in eine Datei sichern und wiederherstellen, z. B. auf einem zweiten PC
-- **Updates:** sieht beim Start (höchstens alle 20 Stunden) auf GitHub nach einer neuen Version und aktualisiert sich auf Klick selbst – die Einstellungen bleiben erhalten
+- **Updates:** sieht kurz nach jedem Start (und im laufenden Betrieb alle 6 Stunden) auf GitHub nach einer neuen Version und aktualisiert sich auf Klick selbst – oder ohne Rückfrage, wenn „Automatisch aktualisieren“ eingeschaltet ist (Standard: aus); die Einstellungen bleiben erhalten
 - **Ohne Installation:** entpacken und starten – die Einstellungen liegen in `%LOCALAPPDATA%\Dock Pilot`
 
 Die ausführliche Anleitung steht in [Anleitung.txt](Anleitung.txt).

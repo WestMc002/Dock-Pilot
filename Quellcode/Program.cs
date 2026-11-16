@@ -59,7 +59,9 @@ namespace DockPilot
                 {
                     Log(e.ExceptionObject as Exception);
                 };
-                Application.Run(new TrayContext(afterUpdate));
+                // /tray: nach dem Update nur im Infobereich starten (Einstellungsfenster war vorher zu)
+                bool tray = Array.Exists(args, a => string.Equals(a, "/tray", StringComparison.OrdinalIgnoreCase));
+                Application.Run(new TrayContext(afterUpdate, tray));
                 GC.KeepAlive(mutex);
             }
             return 0;

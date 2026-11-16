@@ -42,6 +42,9 @@ namespace DockPilot
         private static string _error;
         private static string _errorMore; // technischer Originaltext zum Fehler (für „Details“), kann fehlen
 
+        /// <summary>Fehler beim automatischen Aktualisieren (Originaltext für „Details“); null = keiner.</summary>
+        private static string _installError;
+
         /// <summary>Wird ausgelöst, wenn sich <see cref="Available"/> geändert hat (im UI-Thread).</summary>
         public static event EventHandler AvailableChanged;
 
@@ -122,7 +125,7 @@ namespace DockPilot
             return DateTime.MinValue;
         }
 
-        /// <summary>Automatische Prüfung fällig? Höchstens alle 20 Stunden.</summary>
+        /// <summary>Nachprüfung im laufenden Betrieb fällig? Höchstens alle 20 Stunden (beim Start gilt die Sperre nicht).</summary>
         public static bool Due(Settings s)
         {
             if (Demo.Active || !s.UpdateCheck) return false;
@@ -136,7 +139,17 @@ namespace DockPilot
             if (Demo.Active) return new UpdateStatus(UpdateKind.Current, "Aktuell", "Zuletzt geprüft " + DateTime.Today.ToString("dd.MM.yyyy"));
             DateTime last = LastCheck(s);
             string lastText = last == DateTime.MinValue ? "" : "Zuletzt geprüft " + last.ToLocalTime().ToString("dd.MM.yyyy");
-            if (Available != null) return new UpdateStatus(UpdateKind.Available, "Version " + Available.Version + " verfügbar", lastText);
+            if (Available != null)
+            {
+                if (_installError != null)
+                {
+                    // automatisches Aktualisieren ist gescheitert: Kurzmeldung mit „Details“ statt der letzten Prüfung
+                    UpdateStatus broken = new UpdateStatus(UpdateKind.Available, "Version " + Available.Version + " verfügbar", "Update fehlgeschlagen.");
+                    broken.More = _installError;
+                    return broken;
+                }
+                return new UpdateStatus(UpdateKind.Available, "Version " + Available.Version + " verfügbar", lastText);
+            }
             // noch nichts Fertiges veröffentlicht: neutral melden, das ist kein Fehler
             if (_error == NoRelease) return new UpdateStatus(UpdateKind.Unknown, "Nur Vorabversionen", "Noch keine fertige Version."); // beide Zeilen kurz: wenig Platz
             if (_error != null)
@@ -204,6 +217,7 @@ namespace DockPilot
             bool changed = (Available == null) != (release == null) ||
                            (Available != null && release != null && Available.Version != release.Version);
             Available = release;
+            if (changed) _installError = null;
             if (changed && AvailableChanged != null) AvailableChanged(null, EventArgs.Empty);
         }
 
@@ -237,7 +251,10 @@ namespace DockPilot
         /// Das Skript wartet, bis Dock Pilot beendet ist, ersetzt EXE und Anleitung und startet Dock Pilot
         /// neu. Die Einstellungen (Dock Pilot.ini) bleiben unberührt. Danach muss sich Dock Pilot beenden.
         /// </summary>
-        public static void Install(ReleaseInfo release)
+        public static void Install(ReleaseInfo release) { Install(release, false); }
+
+        /// <param name="tray">Einstellungsfenster war zu: nach dem Update nur im Infobereich starten (--nach-update /tray).</param>
+        public static void Install(ReleaseInfo release, bool tray)
         {
             if (string.IsNullOrEmpty(release.ZipUrl)) throw new Exception("Im Release ist keine ZIP-Datei angehängt.");
             string blocker = InstallBlocker();
@@ -258,7 +275,7 @@ namespace DockPilot
             string target = Path.GetDirectoryName(exe);
             ProcessStartInfo start = new ProcessStartInfo("powershell.exe",
                 "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -ProcessId " + Process.GetCurrentProcess().Id +
-                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"");
+                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"" + (tray ? " -Tray" : ""));
             start.UseShellExecute = true;
             start.WindowStyle = ProcessWindowStyle.Hidden;
             // Programmordner ohne Schreibrechte (z. B. unter Programme): Hilfsskript mit Administratorrechten starten
@@ -293,11 +310,12 @@ namespace DockPilot
                 "Die Einstellungen bleiben erhalten.\n\nJetzt aktualisieren?",
                 "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
+            bool tray = owner == null; // ohne sichtbares Einstellungsfenster: nach dem Update nur im Infobereich
             if (busy != null) busy(true);
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string error = null;
-                try { Install(release); }
+                try { Install(release, tray); }
                 catch (Exception ex) { error = ex.Message; }
                 try
                 {
@@ -316,6 +334,34 @@ namespace DockPilot
             });
         }
 
+        /// <summary>
+        /// Automatisch aktualisieren: ohne Rückfrage herunterladen und installieren (nur mit ZIP, nicht im Projektordner).
+        /// Fehler ohne Meldung: Die Hinweise bleiben, die Kurzmeldung steht mit „Details“ im Info-Fenster.
+        /// </summary>
+        public static void InstallSilently(Control invoker, bool tray)
+        {
+            ReleaseInfo release = Available;
+            if (release == null || !CanInstall() || _installing) return;
+            _installing = true;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                Exception error = null;
+                try { Install(release, tray); }
+                catch (Exception ex) { error = ex; Program.Log(ex); }
+                try
+                {
+                    invoker.BeginInvoke((MethodInvoker)delegate
+                    {
+                        _installing = false;
+                        if (error != null) { _installError = error.Message; return; }
+                        if (ExitRequested != null) ExitRequested(null, EventArgs.Empty);
+                    });
+                }
+                catch { _installing = false; }
+            });
+        }
+        private static bool _installing; // automatisches Update lädt gerade
+
         public static void OpenPage()
         {
             ReleaseInfo r = Available;
@@ -330,7 +376,7 @@ namespace DockPilot
         }
 
         private const string Script = @"# Dock Pilot – Update (wird vom Programm erzeugt)
-param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version)
+param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version,[switch]$Tray)
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $PSScriptRoot 'Update.log'
 $name = Split-Path $Exe -Leaf
@@ -359,7 +405,8 @@ try {
 } catch {
   ('FEHLER ' + $_.Exception.Message) | Out-File $log -Encoding utf8
 }
-Start-Process -FilePath $Exe -ArgumentList '--nach-update'
+if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' }
+else { Start-Process -FilePath $Exe -ArgumentList '--nach-update' }
 ";
     }
 
