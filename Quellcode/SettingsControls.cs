@@ -93,6 +93,10 @@ namespace DockPilot
 
         private int S(float v) { return (int)Math.Round(v * _sc); }
 
+        /// <summary>Zweite Zeile, grau (z. B. „Installiert ist 1.58 …“).</summary>
+        public string Detail { get { return _detail; } set { _detail = value; Invalidate(); } }
+        private string _detail;
+
         protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); Invalidate(); }
 
         protected override void OnLayout(LayoutEventArgs e)
@@ -114,8 +118,12 @@ namespace DockPilot
             g.Clear(p.Back);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fill = Theme.Blend(p.Back, Theme.Accent, 0.14f);
+            // Die Knöpfe füllen ihre Ecken mit ihrer Hintergrundfarbe: an die Leiste anpassen, sonst bleiben helle Ecken
+            foreach (ModernButton b in new[] { Install, Page, Later })
+                if (b.BackColor != fill) b.BackColor = fill;
             using (GraphicsPath path = Theme.RoundRect(r, 8f * _sc))
-            using (SolidBrush brush = new SolidBrush(Theme.Blend(p.Back, Theme.Accent, 0.14f)))
+            using (SolidBrush brush = new SolidBrush(fill))
             using (Pen pen = new Pen(Theme.Blend(p.Back, Theme.Accent, 0.45f)))
             {
                 g.FillPath(brush, path);
@@ -130,9 +138,20 @@ namespace DockPilot
                 x += S(34);
             }
             int right = Install.Left - S(12);
+            // zwei Zeilen, weil neben den drei Knöpfen nur wenig Platz bleibt: oben fett die neue Version, darunter grau die installierte
+            TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis |
+                                    TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
+            int w = Math.Max(10, right - x);
             using (Font f = Theme.UiFont(13.5f * _sc, FontStyle.Bold))
-                TextRenderer.DrawText(g, Text, f, new Rectangle(x, 0, Math.Max(10, right - x), Height), p.Text,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            using (Font f2 = Theme.UiFont(12f * _sc, FontStyle.Regular))
+            {
+                bool two = !string.IsNullOrEmpty(_detail);
+                int h1 = TextRenderer.MeasureText(g, "Ag", f, Size.Empty, flags).Height;
+                int h2 = two ? TextRenderer.MeasureText(g, "Ag", f2, Size.Empty, flags).Height : 0;
+                int top = (Height - h1 - h2) / 2;
+                TextRenderer.DrawText(g, Text, f, new Rectangle(x, top, w, h1), p.Text, fill, flags);
+                if (two) TextRenderer.DrawText(g, _detail, f2, new Rectangle(x, top + h1, w, h2), p.SubText, fill, flags);
+            }
         }
     }
 }

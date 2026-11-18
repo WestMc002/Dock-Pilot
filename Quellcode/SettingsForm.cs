@@ -230,7 +230,8 @@ namespace DockPilot
             show = show && r != null;
             if (show)
             {
-                _bar.Text = "Neue Version " + r.Version + " verfügbar – installiert ist " + AppInfo.Version + ".";
+                _bar.Text = "Neue Version " + r.Version;
+                _bar.Detail = "Installiert ist " + AppInfo.Version;
                 _bar.Invalidate();
             }
             if (show == _barShown) return;

@@ -158,7 +158,16 @@ namespace DockPilot
             _edit.AutoInstall = _original.AutoInstall;
             _edit.NavPinned = _original.NavPinned;
             _edit.Profile = _original.Profile; // wird im Tray-Menü umgeschaltet
-            return _edit.ToIniText();
+            // Werte, die außerhalb dieses Fensters geändert werden (Update-Prüfung, Info-Fenster, Tray-Menü, Stecknadel),
+            // zählen nicht als ungespeicherte Änderung: ihre Zeilen aus dem Vergleich nehmen
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            foreach (string line in _edit.ToIniText().Split('\n'))
+            {
+                if (line.StartsWith("ErsterStart=") || line.StartsWith("LetzteUpdatePruefung=") || line.StartsWith("UpdatesPruefen=") ||
+                    line.StartsWith("AutomatischAktualisieren=") || line.StartsWith("NavigationAngepinnt=") || line.StartsWith("Profil=")) continue;
+                sb.Append(line).Append('\n');
+            }
+            return sb.ToString();
         }
 
         /// <summary>
