@@ -182,8 +182,14 @@ oder "notepad.ico" –, ersetzt es das Programmsymbol. Ein in den Eigenschaften
 gewähltes Symbol hat Vorrang. Neue Bilder gelten nach einem Neustart von
 Dock Pilot. Im selben Ordner liegen die aus RocketDock übernommenen Symbole.
 - Extras: Docks (aktives Profil) und Einstellungen in eine Datei sichern (*.dockpilot) und
-  wiederherstellen, z. B. für einen zweiten PC. Beim Wiederherstellen bleiben
-  die bisherigen Dateien als ".vor-import" im Datenordner liegen.
+  wiederherstellen, z. B. für einen zweiten PC. Vor dem Wiederherstellen zeigt
+  Dock Pilot alle Einträge der Sicherung mit Ziel und Parametern. Einträge mit
+  "Als Administrator", Tastenkürzel oder Netzwerkpfad (\\Server\...) sind
+  hervorgehoben; all das wird nur übernommen, wenn Sie es dort einschalten
+  (Standard: aus, Einträge mit Netzwerkpfaden fehlen dann). Die Update-Schalter
+  bleiben wie auf diesem PC. Die bisherigen Dateien bleiben als ".vor-import"
+  im Datenordner liegen; geht beim Einspielen etwas schief, kommt der bisherige
+  Stand zurück.
   "Standardwerte" setzt alle Seiten zurück, gilt aber erst nach "Speichern".
 
 Passen nicht alle Symbole auf den Bildschirm, verkleinert Dock Pilot sie
@@ -222,5 +228,15 @@ Einstellungen, kein Dialog offen); sonst wird es alle 5 Minuten erneut versucht.
 Dock Pilot startet danach von selbst neu, im Infobereich bzw. mit offenem
 Einstellungsfenster, wenn es vorher offen war. Liegt Dock Pilot unter "Programme",
 fragt Windows bei jedem Update nach Administratorrechten.
+
+Sicherheit beim Update: Jedes Update ist vom Herausgeber signiert. Dock Pilot lädt
+nur die ZIP-Datei des Releases mit dem erwarteten Namen und installiert sie nur,
+wenn die Signatur in der Datei "Dock-Pilot-<Version>.manifest" gültig ist und die
+Prüfsumme (SHA-256) des ZIP dazu passt. Fehlt die Signatur oder passt sie nicht,
+steht im Fenster "Info über Dock Pilot" "Nicht signiert." bzw. "Signatur ungültig.",
+und das Update wird nicht installiert.
+Übernommen werden nur "Dock Pilot.exe" und "Anleitung.txt". Ist dafür
+Administratorrecht nötig, läuft das Update in einem nur für Administratoren
+beschreibbaren Ordner, und Dock Pilot startet danach wieder mit normalen Rechten.
 
 Autor: Günther Schoder · www.westmc002.de

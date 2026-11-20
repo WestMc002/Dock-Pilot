@@ -977,6 +977,12 @@ namespace DockPilot
     /// <summary>Programme, Dateien, Ordner und Webadressen starten.</summary>
     internal static class Shell
     {
+        /// <summary>Explorer über den festen Windows-Pfad, nicht über den Suchpfad.</summary>
+        public static string Explorer
+        {
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"); }
+        }
+
         /// <summary>Startet ein Ziel. Rückgabe: Fehlermeldung oder null.</summary>
         public static string Open(string command, string arguments, string workingDirectory)
         {
@@ -991,7 +997,7 @@ namespace DockPilot
             {
                 ProcessStartInfo psi;
                 if (cmd.StartsWith("::", StringComparison.Ordinal))
-                    psi = new ProcessStartInfo("explorer.exe", "shell:" + cmd); // Systemordner (z. B. Energieoptionen)
+                    psi = new ProcessStartInfo(Shell.Explorer, "shell:" + cmd); // Systemordner (z. B. Energieoptionen)
                 else
                     psi = new ProcessStartInfo(cmd, Environment.ExpandEnvironmentVariables(arguments ?? ""));
                 psi.UseShellExecute = true;
@@ -1028,8 +1034,8 @@ namespace DockPilot
             string p = IconLoader.Expand(path);
             try
             {
-                if (File.Exists(p)) Process.Start("explorer.exe", "/select,\"" + p + "\"");
-                else if (Directory.Exists(p)) Process.Start("explorer.exe", "\"" + p + "\"");
+                if (File.Exists(p)) Process.Start(Shell.Explorer, "/select,\"" + p + "\"");
+                else if (Directory.Exists(p)) Process.Start(Shell.Explorer, "\"" + p + "\"");
             }
             catch { }
         }

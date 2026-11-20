@@ -497,7 +497,7 @@ namespace DockPilot
             // gespeichert: Das Dock nimmt wieder die gespeicherten Einstellungen (gleicher Stand wie die Vorschau)
             _liveSnap = null;
             if (Live != null) Live(null);
-            if (autoWanted != Autostart.IsEnabled && !Autostart.Set(autoWanted, false))
+            if (autoWanted != Autostart.IsEnabled && !Autostart.Set(autoWanted))
             {
                 if (Saved != null) Saved(this, EventArgs.Empty);
                 ShowStatus("Der Autostart konnte nicht geändert werden.", false);

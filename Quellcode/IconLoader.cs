@@ -82,6 +82,14 @@ namespace DockPilot
             return Environment.ExpandEnvironmentVariables(s.Trim().Trim('"'));
         }
 
+        /// <summary>Dateiteil einer Symbolangabe "Datei?Index", wie angegeben (ohne Index, ohne Symbolordner davor).</summary>
+        public static string SplitSpecRaw(string spec)
+        {
+            if (string.IsNullOrEmpty(spec)) return "";
+            int q = spec.LastIndexOf('?');
+            return q > 0 ? spec.Substring(0, q) : spec;
+        }
+
         /// <summary>Teilt "Datei?Index" auf. Unsinnige Nummern aus RocketDock (z. B. "KeePass.exe?75367680") werden zu 0.</summary>
         public static string SplitSpec(string spec, out int index)
         {

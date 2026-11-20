@@ -476,9 +476,15 @@ namespace DockPilot
 
         public static List<DockItem> Load(int dock)
         {
-            List<DockItem> list = new List<DockItem>();
             List<KeyValuePair<string, Dictionary<string, string>>> sections = Ini.ReadSections(FileFor(dock));
-            if (sections == null) return list;
+            if (sections == null) return new List<DockItem>();
+            return ParseItems(sections);
+        }
+
+        /// <summary>Einträge aus den Abschnitten einer Dock.ini (auch für die Vorschau einer Sicherung).</summary>
+        public static List<DockItem> ParseItems(List<KeyValuePair<string, Dictionary<string, string>>> sections)
+        {
+            List<DockItem> list = new List<DockItem>();
             foreach (KeyValuePair<string, Dictionary<string, string>> sec in sections)
             {
                 if (!sec.Key.StartsWith("Eintrag", StringComparison.OrdinalIgnoreCase)) continue;
@@ -511,6 +517,13 @@ namespace DockPilot
         }
 
         public static void Save(List<DockItem> items, int dock)
+        {
+            try { Directory.CreateDirectory(DirectoryOf(Profile)); } catch { }
+            Ini.Write(FileFor(dock), Serialize(items));
+        }
+
+        /// <summary>Text einer Dock.ini mit diesen Einträgen.</summary>
+        public static string Serialize(List<DockItem> items)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("; Dock Pilot - Eintraege im Dock (Reihenfolge = Reihenfolge der Abschnitte)");
@@ -552,8 +565,7 @@ namespace DockPilot
                     sb.AppendLine("KuerzelTaste=" + it.HotkeyKey);
                 }
             }
-            try { Directory.CreateDirectory(DirectoryOf(Profile)); } catch { }
-            Ini.Write(FileFor(dock), sb.ToString());
+            return sb.ToString();
         }
     }
 
@@ -587,11 +599,17 @@ namespace DockPilot
         public static List<KeyValuePair<string, Dictionary<string, string>>> ReadSections(string path, Encoding enc)
         {
             if (!File.Exists(path)) return null;
+            try { return ParseSections(File.ReadAllLines(path, enc)); }
+            catch { return new List<KeyValuePair<string, Dictionary<string, string>>>(); }
+        }
+
+        /// <summary>Abschnitte aus den Zeilen einer INI-Datei.</summary>
+        public static List<KeyValuePair<string, Dictionary<string, string>>> ParseSections(IEnumerable<string> lines)
+        {
             List<KeyValuePair<string, Dictionary<string, string>>> list = new List<KeyValuePair<string, Dictionary<string, string>>>();
             Dictionary<string, string> current = null;
-            try
             {
-                foreach (string raw in File.ReadAllLines(path, enc))
+                foreach (string raw in lines)
                 {
                     string line = raw.Trim();
                     if (line.Length == 0 || line.StartsWith(";")) continue;
@@ -607,7 +625,6 @@ namespace DockPilot
                     current[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
                 }
             }
-            catch { }
             return list;
         }
 

@@ -39,7 +39,7 @@ The program interface is in German.
 - **Windows 11 look:** background like an active window (Mica), light/dark mode, Windows accent color, menus in Windows 11 style
 - **Import from RocketDock:** entries, separators, folder menus, custom icons, sizes, position, auto-hide and hotkey from RocketDock's `Settings.ini`
 - **Backup:** save entries, settings and icons to one file and restore them, e.g. on a second PC
-- **Updates:** checks GitHub for a new version shortly after every start (and every 6 hours while running) and updates itself with one click – or automatically without asking, if you switch on "Automatisch aktualisieren" (off by default); settings are kept
+- **Updates:** checks GitHub for a new version shortly after every start (and every 6 hours while running) and updates itself with one click – or automatically without asking, if you switch on "Automatisch aktualisieren" (off by default); settings are kept. Updates are signed by the publisher; Dock Pilot only installs packages with a valid signature
 - **No installation:** extract and start – settings are stored in `%LOCALAPPDATA%\Dock Pilot`
 
 ### Installation
@@ -59,6 +59,7 @@ Run `Erstellen.bat` in the project folder. It
 - assigns the version number automatically (Major.Minor.Year.MonthDay),
 - keeps the previous EXE and backs up the project to `Backup`,
 - optionally creates the screenshots for this page (`"Dock Pilot.exe" --screenshots`, sample data only),
+- optionally creates the signed release package (folder `Release`; signing needs the publisher's private key, which is not part of this repository – self-built copies simply skip this step),
 - starts the new Dock Pilot.
 
 ---
@@ -83,7 +84,7 @@ Programmleiste am Bildschirmrand – ein moderner Nachfolger des bekannten Rocke
 - **Windows-11-Design:** Hintergrund wie ein aktives Fenster (Mica), Hell/Dunkel, Windows-Akzentfarbe, Menüs im Windows-11-Stil
 - **RocketDock übernehmen:** Einträge, Trennlinien, Ordnermenüs, eigene Symbole, Größen, Position, automatisches Ausblenden und Tastenkürzel aus der `Settings.ini` von RocketDock
 - **Sicherung:** Einträge, Einstellungen und Symbole in eine Datei sichern und wiederherstellen, z. B. auf einem zweiten PC
-- **Updates:** sieht kurz nach jedem Start (und im laufenden Betrieb alle 6 Stunden) auf GitHub nach einer neuen Version und aktualisiert sich auf Klick selbst – oder ohne Rückfrage, wenn „Automatisch aktualisieren“ eingeschaltet ist (Standard: aus); die Einstellungen bleiben erhalten
+- **Updates:** sieht kurz nach jedem Start (und im laufenden Betrieb alle 6 Stunden) auf GitHub nach einer neuen Version und aktualisiert sich auf Klick selbst – oder ohne Rückfrage, wenn „Automatisch aktualisieren“ eingeschaltet ist (Standard: aus); die Einstellungen bleiben erhalten. Updates sind vom Herausgeber signiert; Dock Pilot installiert nur Pakete mit gültiger Signatur
 - **Ohne Installation:** entpacken und starten – die Einstellungen liegen in `%LOCALAPPDATA%\Dock Pilot`
 
 Die ausführliche Anleitung steht in [Anleitung.txt](Anleitung.txt).
@@ -105,6 +106,7 @@ Voraussetzungen: Windows 10 oder 11 mit .NET Framework 4.x (in Windows enthalten
 - vergibt die Versionsnummer automatisch (Haupt.Neben.Jahr.MonatTag),
 - bewahrt die bisherige EXE auf und sichert das Projekt unter `Backup`,
 - erstellt auf Wunsch die Screenshots für diese Seite (`"Dock Pilot.exe" --screenshots`, nur Beispieldaten),
+- erstellt auf Wunsch das signierte Release-Paket (Ordner `Release`; zum Signieren braucht es den privaten Schlüssel des Herausgebers, der nicht in diesem Repository liegt – bei eigenen Builds diesen Schritt einfach überspringen),
 - startet das neue Dock Pilot.
 
 ---
@@ -150,6 +152,7 @@ Voraussetzungen: Windows 10 oder 11 mit .NET Framework 4.x (in Windows enthalten
 | `Quellcode` | C# source code and manifest · C#-Quellcode und Manifest |
 | `Resources` | embedded resources (icon, logo) · eingebettete Ressourcen (Icon, Logo) |
 | `Screenshots` | images for this page · Bilder für diese Seite |
+| `Release` | signed release package (ZIP and manifest) · signiertes Release-Paket (ZIP und Manifest) |
 | `Erstellen.bat` | build script · Build-Skript |
 | `Anleitung.txt` | manual (German) · Anleitung (Deutsch) |
 

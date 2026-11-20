@@ -17,3 +17,8 @@ Design/
 # Windows
 Thumbs.db
 desktop.ini
+
+# Schluesseldateien (nie hochladen)
+*.key
+*.pfx
+*.snk

@@ -4,10 +4,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -19,6 +21,12 @@ namespace DockPilot
     internal sealed class ReleaseInfo
     {
         public string Version, PageUrl, ZipUrl;
+        /// <summary>SHA-256 des ZIP aus dem signierten Manifest (Großbuchstaben); ohne gültige Signatur bleibt ZipUrl leer.</summary>
+        public string Sha256;
+        /// <summary>Kurzmeldung, warum das Update nicht installiert wird (z. B. „Nicht signiert.“), sonst null.</summary>
+        public string Problem;
+        /// <summary>Ausführlicher Text zu <see cref="Problem"/> (für „Details“).</summary>
+        public string ProblemDetail;
     }
 
     /// <summary>
@@ -94,15 +102,69 @@ namespace DockPilot
                 throw shown;
             }
 
+            // Antwort richtig als JSON lesen (nicht per Suchmuster: Der Release-Text könnte sonst
+            // Adressen vortäuschen) und nur das erwartete ZIP mit Prüfsumme übernehmen
+            Dictionary<string, object> obj;
+            try { obj = MiniJson.Parse(json) as Dictionary<string, object>; }
+            catch { obj = null; }
+            if (obj == null) throw new Exception("Antwort unlesbar.");
             ReleaseInfo info = new ReleaseInfo();
             info.PageUrl = ReleasesPage;
-            Match m = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"[vV]?([^\"]+)\"");
-            if (m.Success) info.Version = m.Groups[1].Value.Trim();
-            m = Regex.Match(json, "\"html_url\"\\s*:\\s*\"(https://github\\.com/[^\"]+/releases/tag/[^\"]+)\"");
-            if (m.Success) info.PageUrl = m.Groups[1].Value;
-            m = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"(https://[^\"]+\\.zip)\"", RegexOptions.IgnoreCase);
-            if (m.Success) info.ZipUrl = m.Groups[1].Value;
-            if (string.IsNullOrEmpty(info.Version)) throw new Exception("Antwort unlesbar.");
+            string tag = (MiniJson.Text(obj, "tag_name") ?? "").Trim();
+            if (tag.StartsWith("v", StringComparison.OrdinalIgnoreCase)) tag = tag.Substring(1);
+            Version parsed;
+            if (tag.Length == 0 || !Version.TryParse(tag, out parsed)) throw new Exception("Antwort unlesbar.");
+            info.Version = tag;
+            string page = MiniJson.Text(obj, "html_url");
+            if (page != null && page.StartsWith("https://github.com/" + Repository + "/releases/", StringComparison.OrdinalIgnoreCase))
+                info.PageUrl = page;
+            // ZIP und signiertes Manifest suchen: nur mit den erwarteten Namen und von der Download-Adresse
+            // dieses Repositorys
+            string wanted = AssetName(info.Version);
+            string wantedManifest = ManifestName(info.Version);
+            string prefix = "https://github.com/" + Repository + "/releases/download/";
+            string zipUrl = null, manifestUrl = null;
+            object list;
+            if (obj.TryGetValue("assets", out list) && list is List<object>)
+            {
+                foreach (object entry in (List<object>)list)
+                {
+                    Dictionary<string, object> asset = entry as Dictionary<string, object>;
+                    if (asset == null) continue;
+                    string name = MiniJson.Text(asset, "name");
+                    string url = MiniJson.Text(asset, "browser_download_url");
+                    if (url == null || !url.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.Equals(name, wanted, StringComparison.Ordinal)) zipUrl = url;
+                    else if (string.Equals(name, wantedManifest, StringComparison.Ordinal)) manifestUrl = url;
+                }
+            }
+            if (zipUrl == null) return info; // kein ZIP: nur die Release-Seite
+            // Die Prüfsumme kommt nur aus dem signierten Manifest, nicht von GitHub: Wer das Release austauscht,
+            // kann ohne den privaten Schlüssel keine passende Signatur erzeugen.
+            if (manifestUrl == null)
+            {
+                info.Problem = "Nicht signiert.";
+                info.ProblemDetail = "Im Release fehlt die Signatur (" + wantedManifest + "). Dock Pilot installiert nur signierte Updates.";
+                return info;
+            }
+            byte[] manifest;
+            try { manifest = DownloadSmall(manifestUrl, 8192); }
+            catch (Exception ex)
+            {
+                info.Problem = "Signatur nicht lesbar.";
+                info.ProblemDetail = "Die Signatur konnte nicht geladen werden: " + ex.Message;
+                return info;
+            }
+            string sha, detail;
+            string problem = CheckManifest(manifest, info.Version, out sha, out detail);
+            if (problem != null)
+            {
+                info.Problem = problem;
+                info.ProblemDetail = detail;
+                return info;
+            }
+            info.ZipUrl = zipUrl;
+            info.Sha256 = sha;
             return info;
         }
 
@@ -148,6 +210,13 @@ namespace DockPilot
                     broken.More = _installError;
                     return broken;
                 }
+                if (Available.Problem != null)
+                {
+                    // neue Version da, aber nicht (gültig) signiert: wird nicht installiert
+                    UpdateStatus unsigned = new UpdateStatus(UpdateKind.Available, "Version " + Available.Version + " verfügbar", Available.Problem);
+                    unsigned.More = Available.ProblemDetail;
+                    return unsigned;
+                }
                 return new UpdateStatus(UpdateKind.Available, "Version " + Available.Version + " verfügbar", lastText);
             }
             // noch nichts Fertiges veröffentlicht: neutral melden, das ist kein Fehler
@@ -162,10 +231,137 @@ namespace DockPilot
             return new UpdateStatus(UpdateKind.Current, "Aktuell", lastText);
         }
 
+        /// <summary>Name des ZIP im Release (wie ihn der Workflow anlegt).</summary>
+        public static string AssetName(string version)
+        {
+            return "Dock-Pilot-" + version + ".zip";
+        }
+
+        /// <summary>Name des signierten Manifests neben dem ZIP.</summary>
+        public static string ManifestName(string version)
+        {
+            return "Dock-Pilot-" + version + ".manifest";
+        }
+
+        /// <summary>Kein passendes ZIP im Release: dann nur die Release-Seite.</summary>
+        private const string NoZip = "Im Release ist keine passende ZIP-Datei angehängt.";
+
+        // ------------------------------------------------------------------ Signatur
+
+        // Öffentliche Schlüssel (RSA 3072) des Herausgebers: Haupt- und Reserveschlüssel. Signiert wird mit dem
+        // Hauptschlüssel; der Reserveschlüssel liegt nur in KeePass und ersetzt ihn, falls er verloren geht.
+        private const string MainKey = "<RSAKeyValue><Modulus>tLtylaHt5SgGCrTrEaM0H3Z/UqIQWSL2c3rCpuhZEYnCyJVDIYFCNuLbZ2OeapsJgCttOnwv5djvmpHTcGV6DeFM059O699xepTE0QWKYYM69sCFG4gunH2xh39bM20q9qWbui1Fyy+nN4cqzy26eR7tzXyClAJSS1zCKBuoF1uAtt2c1f1fcCHXdHsjWXZA6Z8OZeiIOizYSfiVHNIJFr8kSFQfnGRaygwp2ta27Hv0z0oKM6Zrvld/vXkgL2um7X1+GV24IzIVT7J8nxmar//yPoc6ugYhgcLjUMBgjwe/5m4REJQFWwntMF1uj5Jf+ehBFZS87kGtSvTykh7mea71JMdLpvAuhicMaP4T8Fr1uTYCPKR4cuiRI+6uogKVOZN23BuZS5iBj1zZkcmopNOXbQupsOkYp2QwejMHoEV7cEc71ZlRqqJed0vBqO8B5H21mrBGJm3kKHxa2QFzY5BZY7ZcC4EG2TZIkC8eZRNUXXmZOdAWGR+aPKeJg7DZ</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+        private const string ReserveKey = "<RSAKeyValue><Modulus>zY/NkGbkd4IZHMMuGty2WLmQ0hm6lEZBql2v84BPf3NT+rpenfLK0kk7aKfRXgFS1G8tz+tHHd58GhioFFhnXN2syFTUus7u5csblitORGoNjTf9Rlicxw6Ut3hX7tkn2u+2PRKE5xOOL+epZV1YvBgr/W67WTt5RZEyfA0Vgn8llhrXaSD32iVNEzkeY5yy1bvQAmoxAk3KjNcD8Uuia9XP9qs/orDO0giIj/xsfY2D7qp/rkhSaIOnt/+gRWHbjhC/PGPga3dmcIMC1C3X0Z/meg6XgI+zWeXOOxFe8jCVRlaeGDoRJlJJGvg6uzIJlLCQeNxnSEufZCD10e+ex2xx75Gp3bqCvBvr49VXEC+pLxQteQMj2V5tuhq23MtIeSV0huaKZ1SPm1kxFjG5vj/11bo2VCkcx9dhfEBDdsucJqdUecbLJp58Y6smM2Ah4Qh7nILSNHHcpWey100qMN3WdwXsfzPVuRtD1c16KgC3TQIov2/2fGQGUxn1Awox</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+
+        private static readonly string[] ManifestKeys = { "Programm", "Version", "Datei", "SHA256", "Schluessel", "Erstellt" };
+
+        /// <summary>
+        /// Manifest prüfen (Aufbau wie Signieren.ps1: UTF-8, LF, feste Reihenfolge, letzte Zeile „Signatur=“ mit
+        /// RSA-SHA256/PKCS#1 v1.5 über alle Bytes davor). Rückgabe: null = gültig (dann <paramref name="sha"/> gesetzt),
+        /// sonst Kurzmeldung; <paramref name="detail"/> erklärt sie.
+        /// </summary>
+        public static string CheckManifest(byte[] data, string version, out string sha, out string detail)
+        {
+            sha = null;
+            detail = null;
+            const string Invalid = "Signatur ungültig.";
+            byte[] marker = Encoding.ASCII.GetBytes("\nSignatur=");
+            int at = IndexOf(data, marker);
+            if (at < 0) { detail = "Im Manifest fehlt die Zeile „Signatur=“."; return Invalid; }
+            byte[] signed = new byte[at + 1];
+            Array.Copy(data, signed, signed.Length);
+            byte[] signature;
+            try
+            {
+                string text = Encoding.ASCII.GetString(data, at + marker.Length, data.Length - at - marker.Length).Trim();
+                signature = Convert.FromBase64String(text);
+            }
+            catch { detail = "Die Signatur im Manifest ist nicht lesbar."; return Invalid; }
+            string[] lines;
+            try { lines = new UTF8Encoding(false, true).GetString(signed).Split('\n'); }
+            catch { detail = "Das Manifest ist kein gültiger UTF-8-Text."; return Invalid; }
+            if (lines.Length != ManifestKeys.Length + 1 || lines[ManifestKeys.Length].Length != 0)
+            {
+                detail = "Das Manifest hat nicht den erwarteten Aufbau.";
+                return Invalid;
+            }
+            Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.Ordinal);
+            for (int i = 0; i < ManifestKeys.Length; i++)
+            {
+                if (!lines[i].StartsWith(ManifestKeys[i] + "=", StringComparison.Ordinal))
+                {
+                    detail = "Im Manifest fehlt oder steht falsch: " + ManifestKeys[i] + ".";
+                    return Invalid;
+                }
+                values[ManifestKeys[i]] = lines[i].Substring(ManifestKeys[i].Length + 1);
+            }
+            string keyName = values["Schluessel"];
+            string keyXml = keyName == "Haupt" ? MainKey : keyName == "Reserve" ? ReserveKey : null;
+            if (keyXml == null) { detail = "Unbekannter Schlüssel im Manifest: " + keyName; return Invalid; }
+            bool ok;
+            try
+            {
+                // PROV_RSA_AES (24): RSA mit SHA-256 auch unter .NET 4
+                using (RSACryptoServiceProvider rsa = new RSACryptoServiceProvider(new CspParameters(24)))
+                {
+                    rsa.PersistKeyInCsp = false;
+                    rsa.FromXmlString(keyXml);
+                    ok = rsa.VerifyData(signed, "SHA256", signature);
+                }
+            }
+            catch (Exception ex) { detail = "Die Signatur konnte nicht geprüft werden: " + ex.Message; return Invalid; }
+            if (!ok)
+            {
+                detail = "Die Signatur passt nicht zum " + (keyName == "Haupt" ? "Haupt" : "Reserve") +
+                         "schlüssel von Dock Pilot. Das Release wurde nicht vom Herausgeber signiert oder nachträglich verändert.";
+                return Invalid;
+            }
+            // gültig signiert: Inhalt muss genau zu diesem Programm und dieser Version passen
+            if (values["Programm"] != "Dock Pilot") { detail = "Das Manifest gehört zu „" + values["Programm"] + "“, nicht zu Dock Pilot."; return Invalid; }
+            if (values["Version"] != version) { detail = "Das Manifest nennt Version " + values["Version"] + ", das Release " + version + "."; return Invalid; }
+            if (values["Datei"] != AssetName(version)) { detail = "Das Manifest nennt die Datei „" + values["Datei"] + "“."; return Invalid; }
+            if (!Regex.IsMatch(values["SHA256"], "^[0-9a-f]{64}$")) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
+            sha = values["SHA256"].ToUpperInvariant();
+            return null;
+        }
+
+        private static int IndexOf(byte[] data, byte[] pattern)
+        {
+            for (int i = 0; i + pattern.Length <= data.Length; i++)
+            {
+                int j = 0;
+                while (j < pattern.Length && data[i + j] == pattern[j]) j++;
+                if (j == pattern.Length) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>Kleine Datei laden (höchstens <paramref name="max"/> Bytes).</summary>
+        private static byte[] DownloadSmall(string url, int max)
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.UserAgent = UserAgent;
+            request.Timeout = 15000;
+            request.ReadWriteTimeout = 15000;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (MemoryStream ms = new MemoryStream())
+            {
+                byte[] buffer = new byte[4096];
+                int n;
+                while ((n = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    ms.Write(buffer, 0, n);
+                    if (ms.Length > max) throw new Exception("Die Datei ist zu groß.");
+                }
+                return ms.ToArray();
+            }
+        }
+
         /// <summary>Kann das Update direkt installiert werden (ZIP vorhanden, nicht im Projektordner)?</summary>
         public static bool CanInstall()
         {
-            return Available != null && !string.IsNullOrEmpty(Available.ZipUrl) && InstallBlocker() == null;
+            return Available != null && !string.IsNullOrEmpty(Available.ZipUrl) && !string.IsNullOrEmpty(Available.Sha256) && InstallBlocker() == null;
         }
 
         /// <summary>
@@ -246,46 +442,190 @@ namespace DockPilot
             catch { return false; }
         }
 
+        /// <summary>Diese Dateien übernimmt das Update aus dem ZIP – sonst nichts.</summary>
+        private const string ExeName = "Dock Pilot.exe", ManualName = "Anleitung.txt";
+
         /// <summary>
-        /// ZIP herunterladen, Hilfsskript schreiben und starten (blockierend – im Hintergrund aufrufen).
-        /// Das Skript wartet, bis Dock Pilot beendet ist, ersetzt EXE und Anleitung und startet Dock Pilot
-        /// neu. Die Einstellungen (Dock Pilot.ini) bleiben unberührt. Danach muss sich Dock Pilot beenden.
+        /// ZIP herunterladen, Prüfsumme (aus dem signierten Manifest) kontrollieren und das Update-Skript starten (blockierend – im Hintergrund
+        /// aufrufen). Das Skript wartet, bis Dock Pilot beendet ist, prüft die Prüfsumme erneut, ersetzt EXE und
+        /// Anleitung und startet Dock Pilot neu. Die Einstellungen bleiben unberührt. Danach muss sich Dock Pilot beenden.
+        /// Ohne Schreibrechte im Programmordner läuft das Skript mit Administratorrechten in einem geschützten
+        /// Arbeitsordner; den Neustart übernimmt dann ein zweiter Prozess mit normalen Rechten.
         /// </summary>
         public static void Install(ReleaseInfo release) { Install(release, false); }
 
         /// <param name="tray">Einstellungsfenster war zu: nach dem Update nur im Infobereich starten (--nach-update /tray).</param>
         public static void Install(ReleaseInfo release, bool tray)
         {
-            if (string.IsNullOrEmpty(release.ZipUrl)) throw new Exception("Im Release ist keine ZIP-Datei angehängt.");
+            // nur ein Update zur Zeit: von Hand und automatisch teilen sich diese Sperre; sie bleibt nach dem Start
+            // des Skripts gesetzt, weil sich Dock Pilot danach beendet
+            if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0) throw new Exception(Running);
+            bool started = false;
+            try
+            {
+                InstallLocked(release, tray);
+                started = true;
+            }
+            finally
+            {
+                if (!started) Interlocked.Exchange(ref _busy, 0);
+            }
+        }
+
+        /// <summary>Läuft gerade ein Update (in diesem Programm oder als Skript nach einem früheren Start)?</summary>
+        public static bool Busy
+        {
+            get { return _busy != 0 || ScriptRunning(); }
+        }
+
+        private static int _busy;
+        private const string Running = "Ein Update läuft bereits.";
+        /// <summary>Name der Sperre, die das Update-Skript bis zu seinem Ende hält.</summary>
+        private const string LockName = @"Local\DockPilot-Update";
+
+        private static bool ScriptRunning()
+        {
+            try
+            {
+                Mutex m;
+                if (!Mutex.TryOpenExisting(LockName, out m)) return false;
+                m.Dispose();
+                return true;
+            }
+            catch (UnauthorizedAccessException) { return true; } // vom Skript mit Administratorrechten angelegt
+            catch { return false; }
+        }
+
+        private static void InstallLocked(ReleaseInfo release, bool tray)
+        {
+            if (release.Problem != null)
+            {
+                Exception unsigned = new Exception(release.Problem);
+                unsigned.Data["Detail"] = release.ProblemDetail;
+                throw unsigned;
+            }
+            if (string.IsNullOrEmpty(release.ZipUrl) || string.IsNullOrEmpty(release.Sha256)) throw new Exception(NoZip);
             string blocker = InstallBlocker();
             if (blocker != null) throw new Exception(blocker);
+            if (ScriptRunning()) throw new Exception(Running);
             PrepareTls();
             Directory.CreateDirectory(Folder);
-            string zip = Path.Combine(Folder, "Dock-Pilot-" + release.Version + ".zip");
+            CleanOldAttempts();
+            // eigener Arbeitsordner je Versuch: Download, Entpacken und Rückfallkopien kommen sich nie in die Quere
+            string attempt = Path.Combine(Folder, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(attempt);
+            string zip = Path.Combine(attempt, AssetName(release.Version));
             using (WebClient client = new WebClient())
             {
                 client.Headers[HttpRequestHeader.UserAgent] = UserAgent;
                 client.DownloadFile(new Uri(release.ZipUrl), zip);
             }
-            if (new FileInfo(zip).Length < 1024) throw new Exception("Die heruntergeladene Datei ist unvollständig.");
-            string script = Path.Combine(Folder, "Update.ps1");
-            File.WriteAllText(script, Script, new UTF8Encoding(true));
+            string hash = Sha256Of(zip);
+            if (!string.Equals(hash, release.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                try { File.Delete(zip); } catch { }
+                Exception bad = new Exception("Download beschädigt.");
+                bad.Data["Detail"] = "Die Prüfsumme (SHA-256) der heruntergeladenen Datei stimmt nicht mit dem signierten Manifest überein.\n" +
+                                     "Erwartet: " + release.Sha256 + "\nErhalten: " + hash;
+                throw bad;
+            }
             try { File.Delete(LogFile); } catch { }
             string exe = Application.ExecutablePath;
-            string target = Path.GetDirectoryName(exe);
-            ProcessStartInfo start = new ProcessStartInfo("powershell.exe",
-                "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -ProcessId " + Process.GetCurrentProcess().Id +
-                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"" + (tray ? " -Tray" : ""));
-            start.UseShellExecute = true;
-            start.WindowStyle = ProcessWindowStyle.Hidden;
-            // Programmordner ohne Schreibrechte (z. B. unter Programme): Hilfsskript mit Administratorrechten starten
-            if (!CanWrite(target)) start.Verb = "runas";
-            try { Process.Start(start); }
+            bool elevated = !CanWrite(Path.GetDirectoryName(exe));
+            // Erhöht: eigener, nicht vorhersagbarer Arbeitsordner unter ProgramData, den das Skript nur für
+            // Administratoren beschreibbar anlegt. Sonst reicht der Temp-Ordner des Benutzers.
+            string work = elevated
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DockPilot-Update-" + Guid.NewGuid().ToString("N"))
+                : attempt;
+            int pid = Process.GetCurrentProcess().Id;
+            StringBuilder vars = new StringBuilder();
+            vars.Append("$ProcessId = ").Append(pid).Append("\n");
+            Var(vars, "Zip", zip);
+            Var(vars, "Exe", exe);
+            Var(vars, "Version", release.Version);
+            Var(vars, "Sha256", release.Sha256.ToUpperInvariant());
+            Var(vars, "Log", LogFile);
+            Var(vars, "Work", work);
+            Var(vars, "ExeName", ExeName);
+            Var(vars, "ManualName", ManualName);
+            vars.Append("$Elevated = $").Append(elevated ? "true" : "false").Append("\n");
+            vars.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
+            ProcessStartInfo start = PowerShell(vars + InstallScript);
+            // Programmordner ohne Schreibrechte (z. B. unter Programme): Skript mit Administratorrechten starten
+            if (elevated) start.Verb = "runas";
+            Process installer;
+            try { installer = Process.Start(start); }
             catch (System.ComponentModel.Win32Exception ex)
             {
                 if (ex.NativeErrorCode == 1223) throw new Exception("Update abgebrochen (Administratorrechte nicht erteilt).");
                 throw;
             }
+            if (!elevated) return;
+            // Neustart mit normalen Rechten: Ein nicht erhöhter Prozess wartet auf das Ende des Updates, übernimmt
+            // das Ergebnis in Update.log und startet Dock Pilot – sonst liefe es danach mit Administratorrechten.
+            int installerId = 0;
+            try { if (installer != null) installerId = installer.Id; } catch { }
+            StringBuilder r = new StringBuilder();
+            r.Append("$ProcessId = ").Append(pid).Append("\n");
+            r.Append("$Installer = ").Append(installerId).Append("\n");
+            Var(r, "Attempt", attempt);
+            Var(r, "Exe", exe);
+            Var(r, "Log", LogFile);
+            Var(r, "Work", work);
+            r.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
+            Process.Start(PowerShell(r + RestartScript));
+        }
+
+        /// <summary>Arbeitsordner abgebrochener Versuche (älter als ein Tag) im Temp-Ordner entfernen.</summary>
+        private static void CleanOldAttempts()
+        {
+            try
+            {
+                foreach (string dir in Directory.GetDirectories(Folder))
+                {
+                    DirectoryInfo di = new DirectoryInfo(dir);
+                    if ((di.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    if (di.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)) try { di.Delete(true); } catch { }
+                }
+            }
+            catch { }
+        }
+
+        private static string Sha256Of(string file)
+        {
+            using (SHA256 sha = SHA256.Create())
+            using (FileStream fs = File.OpenRead(file))
+                return BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+        }
+
+        /// <summary>PowerShell mit dem Skript als Kommando (-EncodedCommand): Es liegt nirgends als Datei, die man austauschen könnte.</summary>
+        private static ProcessStartInfo PowerShell(string script)
+        {
+            string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            string ps = Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe");
+            // nur der feste Systempfad, kein Suchen über PATH oder den aktuellen Ordner
+            if (!File.Exists(ps)) throw new Exception("Windows PowerShell wurde nicht gefunden.");
+            ProcessStartInfo start = new ProcessStartInfo(ps,
+                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " +
+                Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            start.UseShellExecute = true;
+            start.WindowStyle = ProcessWindowStyle.Hidden;
+            start.WorkingDirectory = system;
+            return start;
+        }
+
+        /// <summary>Variable für das Skript als PowerShell-Text in einfachen Anführungszeichen.</summary>
+        private static void Var(StringBuilder sb, string name, string value)
+        {
+            sb.Append('$').Append(name).Append(" = '");
+            foreach (char c in value ?? "")
+            {
+                sb.Append(c);
+                // PowerShell nimmt auch typografische einfache Anführungszeichen als Begrenzer: verdoppeln
+                if (c == '\'' || c == '\u2018' || c == '\u2019' || c == '\u201A' || c == '\u201B') sb.Append(c);
+                if (c == '\n' || c == '\r') throw new Exception("Ungültiger Pfad für das Update.");
+            }
+            sb.Append("'\n");
         }
 
         /// <summary>
@@ -296,11 +636,20 @@ namespace DockPilot
         {
             ReleaseInfo release = Available;
             if (release == null) return;
-            string blocker = InstallBlocker();
-            if (blocker != null || string.IsNullOrEmpty(release.ZipUrl))
+            if (Busy)
             {
+                MessageBox.Show(owner, Running, "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string blocker = InstallBlocker();
+            if (blocker != null || string.IsNullOrEmpty(release.ZipUrl) || string.IsNullOrEmpty(release.Sha256))
+            {
+                string why = blocker;
+                if (why == null && release.Problem != null)
+                    why = "Dock Pilot installiert dieses Update nicht: " + release.Problem +
+                          (string.IsNullOrEmpty(release.ProblemDetail) ? "" : "\n\n" + release.ProblemDetail);
                 if (MessageBox.Show(owner,
-                    (blocker ?? "Im Release ist keine ZIP-Datei angehängt.") + "\n\nRelease-Seite auf GitHub öffnen?",
+                    (why ?? NoZip) + "\n\nRelease-Seite auf GitHub öffnen?",
                     "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                     OpenPage();
                 return;
@@ -316,7 +665,12 @@ namespace DockPilot
             {
                 string error = null;
                 try { Install(release, tray); }
-                catch (Exception ex) { error = ex.Message; }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    string detail = ex.Data["Detail"] as string;
+                    if (detail != null) error += "\n\n" + detail;
+                }
                 try
                 {
                     invoker.BeginInvoke((MethodInvoker)delegate
@@ -341,8 +695,7 @@ namespace DockPilot
         public static void InstallSilently(Control invoker, bool tray)
         {
             ReleaseInfo release = Available;
-            if (release == null || !CanInstall() || _installing) return;
-            _installing = true;
+            if (release == null || !CanInstall() || Busy) return;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 Exception error = null;
@@ -352,15 +705,13 @@ namespace DockPilot
                 {
                     invoker.BeginInvoke((MethodInvoker)delegate
                     {
-                        _installing = false;
-                        if (error != null) { _installError = error.Message; return; }
+                        if (error != null) { _installError = (error.Data["Detail"] as string) ?? error.Message; return; }
                         if (ExitRequested != null) ExitRequested(null, EventArgs.Empty);
                     });
                 }
-                catch { _installing = false; }
+                catch { }
             });
         }
-        private static bool _installing; // automatisches Update lädt gerade
 
         public static void OpenPage()
         {
@@ -375,36 +726,130 @@ namespace DockPilot
             catch { return null; }
         }
 
-        private const string Script = @"# Dock Pilot – Update (wird vom Programm erzeugt)
-param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version,[switch]$Tray)
+        // Update-Skript. Davor setzt das Programm: $ProcessId, $Zip, $Exe, $Version, $Sha256, $Log, $Work,
+        // $ExeName, $ManualName, $Elevated, $Tray. Nur ASCII-Anführungszeichen verwenden.
+        private const string InstallScript = @"
 $ErrorActionPreference = 'Stop'
-$log = Join-Path $PSScriptRoot 'Update.log'
-$name = Split-Path $Exe -Leaf
 $target = Split-Path $Exe -Parent
+$workReady = -not $Elevated
+$result = $null
+$lock = $null
+$haveLock = $false
 try {
+  # nur ein Update zur Zeit (Sperre bis zum Ende dieses Skripts)
+  $lock = New-Object System.Threading.Mutex($false, 'Local\DockPilot-Update')
+  try { $haveLock = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $haveLock = $true }
+  if (-not $haveLock) { throw 'Ein anderes Update laeuft gerade.' }
   try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch {}
   Start-Sleep -Milliseconds 500
-  $dir = Join-Path $PSScriptRoot 'Neu'
-  if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
-  Expand-Archive -Path $Zip -DestinationPath $dir -Force
-  $new = Get-ChildItem $dir -Recurse -File | Where-Object { $_.Name -eq $name } | Select-Object -First 1
-  if (-not $new) { throw ('Im ZIP fehlt ' + $name) }
-  $old = $Exe + '.alt'
-  Copy-Item $Exe $old -Force
+  if ($Elevated) {
+    $admins = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+    $system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+    $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-11')
+    $root = [Environment]::GetFolderPath('CommonApplicationData')
+    if ((Split-Path $Work -Parent) -ne $root) { throw 'Unerwarteter Arbeitsordner.' }
+    # alte Arbeitsordner frueherer Updates entfernen: nur eigene (Besitzer Administratoren), keine Verknuepfungen
+    Get-ChildItem -LiteralPath $root -Directory -Filter 'DockPilot-Update-*' -Force -ErrorAction SilentlyContinue | ForEach-Object {
+      try {
+        if (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+          $o = (Get-Acl -LiteralPath $_.FullName).GetOwner([System.Security.Principal.SecurityIdentifier])
+          if ($o -eq $admins -or $o -eq $system) { [System.IO.Directory]::Delete($_.FullName, $true) }
+        }
+      } catch {}
+    }
+    # Arbeitsordner gleich mit Rechten anlegen: schreiben nur SYSTEM und Administratoren, lesen alle angemeldeten Benutzer
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $none = [System.Security.AccessControl.PropagationFlags]::None
+    $sec = New-Object System.Security.AccessControl.DirectorySecurity
+    $sec.SetAccessRuleProtection($true, $false)
+    $sec.SetOwner($admins)
+    foreach ($sid in @($admins, $system)) {
+      $sec.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', $inherit, $none, 'Allow')))
+    }
+    $sec.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($users, 'ReadAndExecute', $inherit, $none, 'Allow')))
+    if (Test-Path -LiteralPath $Work) { throw 'Der Arbeitsordner fuer das Update existiert bereits.' }
+    [void][System.IO.Directory]::CreateDirectory($Work, $sec)
+    $o = (Get-Acl -LiteralPath $Work).GetOwner([System.Security.Principal.SecurityIdentifier])
+    if (-not ($o -eq $admins -or $o -eq $system)) { throw 'Der Arbeitsordner fuer das Update ist nicht geschuetzt.' }
+    $workReady = $true
+    $zipWork = Join-Path $Work 'Update.zip'
+    Copy-Item -LiteralPath $Zip -Destination $zipWork -Force
+  } else {
+    $zipWork = $Zip
+  }
+  # Pruefsumme an der Datei pruefen, die tatsaechlich entpackt wird
+  $hash = (Get-FileHash -LiteralPath $zipWork -Algorithm SHA256).Hash
+  if ($hash -ne $Sha256) { throw ('Die Pruefsumme des Updates stimmt nicht (erwartet ' + $Sha256 + ', erhalten ' + $hash + ').') }
+  $dir = Join-Path $Work 'Neu'
+  if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+  Expand-Archive -LiteralPath $zipWork -DestinationPath $dir -Force
+  # nur bekannte Dateien uebernehmen
+  $new = Join-Path $dir $ExeName
+  if (-not (Test-Path -LiteralPath $new -PathType Leaf)) { throw ('Im ZIP fehlt ' + $ExeName) }
+  $pairs = @(,@($new, $Exe))
+  $manual = Join-Path $dir $ManualName
+  if (Test-Path -LiteralPath $manual -PathType Leaf) { $pairs += ,@($manual, (Join-Path $target $ManualName)) }
+  # Rueckfallkopien im eigenen Arbeitsordner, nicht neben den Programmdateien
+  $alt = Join-Path $Work 'Alt'
+  New-Item -ItemType Directory -Path $alt -Force | Out-Null
+  $done = @()
+  $i = 0
   try {
-    Copy-Item $new.FullName $Exe -Force
-    Get-ChildItem $new.DirectoryName -File | Where-Object { $_.Name -ne $name } | Copy-Item -Destination $target -Force
+    foreach ($p in $pairs) {
+      $i++
+      $bak = Join-Path $alt ([string]$i)
+      $had = Test-Path -LiteralPath $p[1]
+      if ($had) { Copy-Item -LiteralPath $p[1] -Destination $bak -Force }
+      $done += ,@($p[1], $bak, $had)
+      Copy-Item -LiteralPath $p[0] -Destination $p[1] -Force
+    }
   } catch {
-    Copy-Item $old $Exe -Force
+    foreach ($d in $done) {
+      if ($d[2]) { Copy-Item -LiteralPath $d[1] -Destination $d[0] -Force }
+      else { Remove-Item -LiteralPath $d[0] -Force -ErrorAction SilentlyContinue }
+    }
     throw
   }
-  Remove-Item $old -Force
-  Remove-Item $dir -Recurse -Force
-  Remove-Item $Zip -Force
-  ('OK ' + $Version) | Out-File $log -Encoding utf8
+  Remove-Item -LiteralPath $alt -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $zipWork -Force -ErrorAction SilentlyContinue
+  $result = 'OK ' + $Version
 } catch {
-  ('FEHLER ' + $_.Exception.Message) | Out-File $log -Encoding utf8
+  $result = 'FEHLER ' + $_.Exception.Message
 }
+if ($Elevated) {
+  # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner schreiben; Neustart macht der nicht erhoehte Prozess
+  if ($workReady) { try { $result | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {} }
+} else {
+  try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch {}
+  Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($haveLock) { try { $lock.ReleaseMutex() } catch {} }
+if (-not $Elevated) {
+  if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' }
+  else { Start-Process -FilePath $Exe -ArgumentList '--nach-update' }
+}
+";
+
+        // Neustart nach einem Update mit Administratorrechten, selbst mit normalen Rechten.
+        // Davor setzt das Programm: $ProcessId, $Installer, $Attempt, $Exe, $Log, $Work, $Tray.
+        private const string RestartScript = @"
+$ErrorActionPreference = 'SilentlyContinue'
+try { Wait-Process -Id $ProcessId -Timeout 60 } catch {}
+$end = (Get-Date).AddMinutes(15)
+$workLog = Join-Path $Work 'Update.log'
+while ((Get-Date) -lt $end) {
+  if ($Installer -gt 0) { if (-not (Get-Process -Id $Installer -ErrorAction SilentlyContinue)) { break } }
+  elseif (Test-Path -LiteralPath $workLog) { break }
+  Start-Sleep -Milliseconds 500
+}
+Start-Sleep -Milliseconds 300
+$text = $null
+if (Test-Path -LiteralPath $workLog) { $text = Get-Content -LiteralPath $workLog -Raw -Encoding UTF8 }
+if ($text) { $text = $text.Trim() }
+if (-not $text) { $text = 'FEHLER Das Update wurde nicht ausgefuehrt.' }
+$text | Out-File -LiteralPath $Log -Encoding utf8
+Remove-Item -LiteralPath $Attempt -Recurse -Force
 if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' }
 else { Start-Process -FilePath $Exe -ArgumentList '--nach-update' }
 ";
@@ -420,5 +865,124 @@ else { Start-Process -FilePath $Exe -ArgumentList '--nach-update' }
         /// <summary>Ausführlicher Text zur zweiten Zeile (hinter „Details“), null = keiner.</summary>
         public string More;
         public UpdateStatus(UpdateKind kind, string title, string detail) { Kind = kind; Title = title; Detail = detail ?? ""; }
+    }
+
+    /// <summary>Kleiner JSON-Leser für die Antwort von GitHub (Objekte, Listen, Texte, Zahlen, true/false/null).</summary>
+    internal static class MiniJson
+    {
+        public static object Parse(string json)
+        {
+            int i = 0;
+            object value = Value(json, ref i, 0);
+            Skip(json, ref i);
+            if (i != json.Length) throw new FormatException("JSON: Zeichen nach dem Ende");
+            return value;
+        }
+
+        /// <summary>Text eines Feldes oder null.</summary>
+        public static string Text(Dictionary<string, object> obj, string key)
+        {
+            object v;
+            return obj != null && obj.TryGetValue(key, out v) ? v as string : null;
+        }
+
+        private static void Skip(string s, ref int i)
+        {
+            while (i < s.Length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++;
+        }
+
+        private static object Value(string s, ref int i, int depth)
+        {
+            if (depth > 64) throw new FormatException("JSON: zu tief verschachtelt");
+            Skip(s, ref i);
+            if (i >= s.Length) throw new FormatException("JSON: unerwartetes Ende");
+            char c = s[i];
+            if (c == '{')
+            {
+                Dictionary<string, object> obj = new Dictionary<string, object>(StringComparer.Ordinal);
+                i++;
+                Skip(s, ref i);
+                if (i < s.Length && s[i] == '}') { i++; return obj; }
+                while (true)
+                {
+                    Skip(s, ref i);
+                    if (i >= s.Length || s[i] != '"') throw new FormatException("JSON: Name erwartet");
+                    string key = Str(s, ref i);
+                    Skip(s, ref i);
+                    if (i >= s.Length || s[i] != ':') throw new FormatException("JSON: Doppelpunkt erwartet");
+                    i++;
+                    obj[key] = Value(s, ref i, depth + 1);
+                    Skip(s, ref i);
+                    if (i < s.Length && s[i] == ',') { i++; continue; }
+                    if (i < s.Length && s[i] == '}') { i++; return obj; }
+                    throw new FormatException("JSON: Komma oder } erwartet");
+                }
+            }
+            if (c == '[')
+            {
+                List<object> list = new List<object>();
+                i++;
+                Skip(s, ref i);
+                if (i < s.Length && s[i] == ']') { i++; return list; }
+                while (true)
+                {
+                    list.Add(Value(s, ref i, depth + 1));
+                    Skip(s, ref i);
+                    if (i < s.Length && s[i] == ',') { i++; continue; }
+                    if (i < s.Length && s[i] == ']') { i++; return list; }
+                    throw new FormatException("JSON: Komma oder ] erwartet");
+                }
+            }
+            if (c == '"') return Str(s, ref i);
+            if (Word(s, ref i, "true")) return true;
+            if (Word(s, ref i, "false")) return false;
+            if (Word(s, ref i, "null")) return null;
+            int start = i;
+            while (i < s.Length && "+-0123456789.eE".IndexOf(s[i]) >= 0) i++;
+            if (i == start) throw new FormatException("JSON: unbekannter Wert");
+            double d;
+            if (!double.TryParse(s.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out d))
+                throw new FormatException("JSON: ungültige Zahl");
+            return d;
+        }
+
+        private static bool Word(string s, ref int i, string word)
+        {
+            if (string.CompareOrdinal(s, i, word, 0, word.Length) != 0) return false;
+            i += word.Length;
+            return true;
+        }
+
+        private static string Str(string s, ref int i)
+        {
+            i++; // "
+            StringBuilder sb = new StringBuilder();
+            while (i < s.Length)
+            {
+                char c = s[i++];
+                if (c == '"') return sb.ToString();
+                if (c != '\\') { sb.Append(c); continue; }
+                if (i >= s.Length) break;
+                char e = s[i++];
+                switch (e)
+                {
+                    case '"': sb.Append('"'); break;
+                    case '\\': sb.Append('\\'); break;
+                    case '/': sb.Append('/'); break;
+                    case 'b': sb.Append('\b'); break;
+                    case 'f': sb.Append('\f'); break;
+                    case 'n': sb.Append('\n'); break;
+                    case 'r': sb.Append('\r'); break;
+                    case 't': sb.Append('\t'); break;
+                    case 'u':
+                        if (i + 4 > s.Length) throw new FormatException("JSON: unvollständiges \\u");
+                        sb.Append((char)int.Parse(s.Substring(i, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+                        i += 4;
+                        break;
+                    default: throw new FormatException("JSON: ungültiges Escape");
+                }
+            }
+            throw new FormatException("JSON: Text nicht abgeschlossen");
+        }
     }
 }

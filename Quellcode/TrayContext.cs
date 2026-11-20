@@ -411,10 +411,18 @@ namespace DockPilot
                 if (dlg.ShowDialog(owner) != DialogResult.OK) return false;
                 file = dlg.FileName;
             }
-            if (MessageBox.Show(owner,
-                "Die Sicherung ersetzt alle Einträge und Einstellungen von Dock Pilot.\n\nSicherung jetzt wiederherstellen?",
-                AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return false;
-            string err = Backup.Import(file);
+            // erst vollständig lesen und prüfen, dann die Einträge zeigen; „Als Administrator“ und Tastenkürzel
+            // sowie Einträge mit Netzwerkpfaden nur auf ausdrücklichen Wunsch übernehmen
+            BackupContent content;
+            try { content = Backup.Open(file); }
+            catch (Exception ex)
+            {
+                MessageBox.Show(owner, "Die Sicherung konnte nicht gelesen werden.\n\n" + ex.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            bool withAdmin, withHotkeys, withNetwork;
+            if (!BackupDialog.Ask(owner, file, content, out withAdmin, out withHotkeys, out withNetwork)) return false;
+            string err = Backup.Import(content, withAdmin, withHotkeys, withNetwork);
             if (err != null)
             {
                 MessageBox.Show(owner, "Die Sicherung konnte nicht wiederhergestellt werden.\n\n" + err, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -423,10 +431,20 @@ namespace DockPilot
             // Zustände dieses PCs behalten (nicht Teil der Einstellungen eines anderen PCs)
             bool navPinned = _settings.NavPinned;
             string lastCheck = _settings.LastUpdateCheck;
+            bool updateCheck = _settings.UpdateCheck, autoInstall = _settings.AutoInstall;
             Settings loaded = Settings.Load();
             loaded.FirstRun = false;
             loaded.NavPinned = navPinned;
             loaded.LastUpdateCheck = lastCheck;
+            // Update-Schalter gehören zu diesem PC: nicht aus der Sicherung übernehmen
+            loaded.UpdateCheck = updateCheck;
+            loaded.AutoInstall = autoInstall;
+            // Tastenkürzel des Docks nur mit Zustimmung aus der Sicherung, sonst bleibt das bisherige
+            if (!withHotkeys)
+            {
+                loaded.HotkeyModifiers = _settings.HotkeyModifiers;
+                loaded.HotkeyKey = _settings.HotkeyKey;
+            }
             loaded.Profile = _settings.Profile; // das aktive Profil dieses PCs bleibt
             _settings.CopyFrom(loaded);
             _settings.Save();
@@ -525,7 +543,7 @@ namespace DockPilot
             bool autoOn = Autostart.IsEnabled;
             GlyphMenuItem auto = mb.Item("Mit Windows starten", MenuHelper.Startup, delegate
             {
-                if (!Autostart.Set(!autoOn, false))
+                if (!Autostart.Set(!autoOn))
                     MessageBox.Show("Der Autostart konnte nicht geändert werden.", AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             });
             MenuBuilder.MakeToggle(auto, autoOn);

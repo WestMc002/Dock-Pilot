@@ -1,8 +1,13 @@
-# Dock Pilot - automatische Bereitstellung als ZIP (Dock Pilot.exe + Anleitung.txt)
+# Dock Pilot - Release aus dem signierten Release-Paket
+# Das Paket entsteht auf dem PC des Herausgebers (Erstellen.bat: ZIP mit Dock Pilot.exe und
+# Anleitung.txt, dazu ein mit dem privaten Schluessel signiertes Manifest) und liegt im Ordner
+# Release. Der Workflow baut nichts selbst: Er prueft, dass ZIP und Manifest zur Version
+# passen (Name, Version, SHA-256 - die Signatur prueft erst Dock Pilot, der Schluessel ist nicht
+# auf GitHub), und haengt beide an das Release.
 # Ausloeser: Aenderung dieser Datei auf main oder per Hand ueber "Run workflow"
 # (Eingabe der Versionsnummer). Ohne Eingabe gilt die Version aus dem neuesten
 # Commit "Dock Pilot <Version> - Aenderungen".
-# Gibt es das Release zur Version schon, wird nichts neu gebaut, nur der Text aufgefrischt.
+# Gibt es das Release zur Version schon, wird nur der Text aufgefrischt.
 # Vorabversion: steht im Titel des Versions-Commits "Vorabversion", wird das Release als
 # Vorabversion (Pre-release) angelegt. Per Hand: Eingabe "vorab" = ja/nein, auto = wie im Commit.
 # Vorabversionen liefert /releases/latest nicht aus - die Update-Pruefung bietet sie nicht an.
@@ -95,40 +100,42 @@ jobs:
           $zeilen.Add('- Erste Schritte: Programme, Verknüpfungen und Ordner aus dem Explorer ins Dock ziehen; Rechtsklick ins Dock zum Bearbeiten. Ist RocketDock installiert, bietet Dock Pilot beim ersten Start die Übernahme aller Einträge an.')
           $zeilen.Add('- Update: Dock Pilot sieht selbst auf GitHub nach neuen Versionen und aktualisiert sich auf Klick (Tray-Menü, Hinweis im Infobereich oder Info-Fenster). Von Hand: Dock Pilot beenden und die vorhandene `Dock Pilot.exe` ersetzen.')
           $zeilen.Add('- Voraussetzungen: Windows 10 oder 11 mit .NET Framework 4.x (in Windows enthalten).')
+          $zeilen.Add('- Signatur: `Dock-Pilot-<Version>.manifest` ist die signierte Prüfsumme des ZIP. Dock Pilot installiert Updates nur, wenn diese Signatur gültig ist.')
           $zeilen.Add('- Ausführliche Beschreibung in `Anleitung.txt` im ZIP.')
           [IO.File]::WriteAllText("$PWD\notes.md", ($zeilen -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
           Get-Content notes.md -Encoding utf8
 
-      - name: Kompilieren
+      - name: Release-Paket pruefen
         if: steps.ver.outputs.exists == '0'
         shell: pwsh
         run: |
           $ver = '${{ steps.ver.outputs.ver }}'
-          @(
-            "[assembly: System.Reflection.AssemblyVersion(`"$ver`")]"
-            "[assembly: System.Reflection.AssemblyFileVersion(`"$ver`")]"
-            "[assembly: System.Reflection.AssemblyInformationalVersion(`"$ver`")]"
-            "namespace DockPilot { public static partial class AppInfo { public const string Version = `"$ver`"; } }"
-          ) | Set-Content Quellcode\VersionInfo.cs -Encoding utf8
-          New-Item -ItemType Directory -Force Bin | Out-Null
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:Bin\Dock Pilot.exe" `
-            "/win32icon:Resources\Dock Pilot.ico" `
-            "/resource:Resources\Dock Pilot.ico,Dock Pilot.ico" `
-            "/resource:Resources\GS-Logo.png,GS-Logo.png" `
-            /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
-            "/win32manifest:Quellcode\app.manifest" Quellcode\*.cs
-          if($LASTEXITCODE -ne 0) { throw 'Kompilieren fehlgeschlagen' }
-          (Get-Item 'Bin\Dock Pilot.exe').VersionInfo.FileVersion
+          $zip = "Release\Dock-Pilot-$ver.zip"
+          $man = "Release\Dock-Pilot-$ver.manifest"
+          if(-not (Test-Path -LiteralPath $zip)) { throw "Im Ordner Release fehlt $zip" }
+          if(-not (Test-Path -LiteralPath $man)) { throw "Im Ordner Release fehlt $man" }
+          $bytes = [IO.File]::ReadAllBytes($man)
+          if([Array]::IndexOf($bytes, [byte]13) -ge 0) { throw 'Das Manifest enthaelt CR (Zeilenende muss LF sein, sonst passt die Signatur nicht)' }
+          $werte = @{}
+          foreach($z in ([Text.Encoding]::UTF8.GetString($bytes) -split "`n")) { if($z -match '^([A-Za-z0-9]+)=(.*)$') { $werte[$Matches[1]] = $Matches[2] } }
+          if($werte['Programm'] -cne 'Dock Pilot') { throw "Manifest: Programm ist '$($werte['Programm'])'" }
+          if($werte['Version'] -cne $ver) { throw "Manifest: Version ist '$($werte['Version'])', erwartet $ver" }
+          if($werte['Datei'] -cne "Dock-Pilot-$ver.zip") { throw "Manifest: Datei ist '$($werte['Datei'])'" }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($werte['SHA256'] -cne $hash) { throw "Manifest: SHA256 passt nicht zum ZIP ($hash)" }
+          if(-not $werte['Signatur']) { throw 'Manifest: Signatur fehlt' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $zip).Path)
+          try { $namen = @($z.Entries | ForEach-Object { $_.FullName }) } finally { $z.Dispose() }
+          if($namen -notcontains 'Dock Pilot.exe') { throw 'Im ZIP fehlt Dock Pilot.exe' }
+          Write-Host "Release-Paket in Ordnung: $($namen -join ', ') - SHA256 $hash, Schluessel $($werte['Schluessel'])"
 
       - name: Release anlegen
         if: steps.ver.outputs.exists == '0'
         shell: pwsh
         run: |
           $ver = '${{ steps.ver.outputs.ver }}'
-          $zip = "Dock-Pilot-$ver.zip"
-          Compress-Archive -Path 'Bin\Dock Pilot.exe', Anleitung.txt -DestinationPath $zip -Force
-          $ghArgs = @("v$ver", $zip, '--title', "Dock Pilot $ver", '--notes-file', 'notes.md', '--target', $env:GITHUB_SHA)
+          $ghArgs = @("v$ver", "Release\Dock-Pilot-$ver.zip", "Release\Dock-Pilot-$ver.manifest", '--title', "Dock Pilot $ver", '--notes-file', 'notes.md', '--target', $env:GITHUB_SHA)
           if('${{ steps.ver.outputs.pre }}' -eq '1') { $ghArgs += '--prerelease' }
           gh release create @ghArgs
 
