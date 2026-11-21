@@ -157,8 +157,17 @@ namespace DockPilot
             string s;
             try { s = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"')); }
             catch { s = path.Trim(); }
+            // erweiterte Pfade (\\?\…, \\.\…): UNC ist Netzwerk, ein Laufwerk wird normal weiter geprüft,
+            // alles andere (Volume-GUID, Geräte, Pipes …) ist unklar und gilt deshalb als Netzwerk
             if (s.StartsWith(@"\\?\", StringComparison.Ordinal) || s.StartsWith(@"\\.\", StringComparison.Ordinal))
-                return s.Substring(4).StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase);
+            {
+                string rest = s.Substring(4);
+                if (rest.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase)) return true;
+                if (rest.Length >= 2 && rest[1] == ':' && char.IsLetter(rest[0]) && (rest.Length == 2 || rest[2] == '\\'))
+                    s = rest;
+                else
+                    return true;
+            }
             if (s.StartsWith(@"\\", StringComparison.Ordinal) || s.StartsWith("//", StringComparison.Ordinal) ||
                 s.StartsWith(@"\/", StringComparison.Ordinal) || s.StartsWith(@"/\", StringComparison.Ordinal))
                 return true;
@@ -295,6 +304,7 @@ namespace DockPilot
             target.LastUpdateCheck = current.LastUpdateCheck;
             target.UpdateCheck = current.UpdateCheck;
             target.AutoInstall = current.AutoInstall;
+            target.KeepOldTask = current.KeepOldTask; // Entscheidung zur alten Aufgabe gilt für diesen PC
             target.Profile = current.Profile;
             if (!withHotkeys)
             {

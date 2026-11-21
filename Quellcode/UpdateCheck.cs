@@ -490,12 +490,17 @@ namespace DockPilot
         /// </summary>
         private static string LockName
         {
+            get { return @"Global\DockPilot-Update-" + TargetId; }
+        }
+
+        /// <summary>Kennung des Installationsziels (24 Zeichen der SHA-256 des Programmordners) für Sperre und Arbeitsordner.</summary>
+        private static string TargetId
+        {
             get
             {
                 string dir = Path.GetFullPath(AppInfo.ExeDirectory).TrimEnd('\\').ToUpperInvariant();
                 using (SHA256 sha = SHA256.Create())
-                    return @"Global\DockPilot-Update-" +
-                           BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(dir))).Replace("-", "").Substring(0, 24);
+                    return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(dir))).Replace("-", "").Substring(0, 24);
             }
         }
 
@@ -551,7 +556,7 @@ namespace DockPilot
             // Erhöht: eigener, nicht vorhersagbarer Arbeitsordner unter ProgramData, den das Skript nur für
             // Administratoren beschreibbar anlegt. Sonst reicht der Temp-Ordner des Benutzers.
             string work = elevated
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DockPilot-Update-" + Guid.NewGuid().ToString("N"))
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DockPilot-Update-" + TargetId + "-" + Guid.NewGuid().ToString("N"))
                 : attempt;
             int pid = Process.GetCurrentProcess().Id;
             StringBuilder vars = new StringBuilder();
@@ -570,6 +575,7 @@ namespace DockPilot
             Var(vars, "MainKey", MainKey);
             Var(vars, "ReserveKey", ReserveKey);
             Var(vars, "LockName", LockName);
+            Var(vars, "TargetId", TargetId);
             Var(vars, "Log", LogFile);
             Var(vars, "Work", work);
             Var(vars, "ExeName", ExeName);
@@ -762,7 +768,7 @@ namespace DockPilot
         }
 
         // Update-Skript. Davor setzt das Programm: $ProcessId, $Zip, $Manifest, $Exe, $Version, $Sha256, $AssetName,
-        // $MainKey, $ReserveKey, $LockName, $Log, $Work, $ExeName, $ManualName, $Elevated, $Tray. Nur ASCII-Anführungszeichen verwenden.
+        // $MainKey, $ReserveKey, $LockName, $TargetId, $Log, $Work, $ExeName, $ManualName, $Elevated, $Tray. Nur ASCII-Anführungszeichen verwenden.
         private const string InstallScript = @"
 $ErrorActionPreference = 'Stop'
 $target = Split-Path $Exe -Parent
@@ -782,13 +788,28 @@ try {
     $system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
     $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-11')
     $root = [Environment]::GetFolderPath('CommonApplicationData')
-    if ((Split-Path $Work -Parent) -ne $root) { throw 'Unerwarteter Arbeitsordner.' }
-    # alte Arbeitsordner frueherer Updates entfernen: nur eigene (Besitzer Administratoren), keine Verknuepfungen
+    if ((Split-Path $Work -Parent) -ne $root -or (Split-Path $Work -Leaf) -notlike ('DockPilot-Update-' + $TargetId + '-*')) { throw 'Unerwarteter Arbeitsordner.' }
+    # alte Arbeitsordner frueherer Updates entfernen: nur eigene (Besitzer Administratoren), keine Verknuepfungen,
+    # und nur nachweislich inaktive: gleiches Ziel (diese Sperre halten wir) oder anderes Ziel ohne gehaltene Sperre
+    # und mindestens eine Stunde unveraendert; Ordner ohne Zielkennung (aeltere Versionen) nur nach einer Stunde
     Get-ChildItem -LiteralPath $root -Directory -Filter 'DockPilot-Update-*' -Force -ErrorAction SilentlyContinue | ForEach-Object {
       try {
         if (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
           $o = (Get-Acl -LiteralPath $_.FullName).GetOwner([System.Security.Principal.SecurityIdentifier])
-          if ($o -eq $admins -or $o -eq $system) { [System.IO.Directory]::Delete($_.FullName, $true) }
+          if ($o -eq $admins -or $o -eq $system) {
+            $inactive = $false
+            if ($_.Name -match '^DockPilot-Update-([0-9A-F]{24})-[0-9a-f]{32}$') {
+              if ($Matches[1] -ceq $TargetId) { $inactive = $true }
+              else {
+                $held = $true
+                try { $other = $null; $held = [System.Threading.Mutex]::TryOpenExisting('Global\DockPilot-Update-' + $Matches[1], [ref]$other); if ($other) { $other.Dispose() } } catch { $held = $true }
+                $inactive = (-not $held) -and ($_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-1))
+              }
+            } else {
+              $inactive = $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-1)
+            }
+            if ($inactive) { [System.IO.Directory]::Delete($_.FullName, $true) }
+          }
         }
       } catch {}
     }
