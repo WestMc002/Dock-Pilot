@@ -169,6 +169,48 @@ namespace DockPilot
             _autoRetry.Interval = 5 * 60 * 1000;
             _autoRetry.Tick += delegate { _autoRetry.Stop(); TryAutoUpdate(); };
             SystemEvents.UserPreferenceChanged += OnPreferenceChanged;
+            CheckOldTask();
+        }
+
+        /// <summary>
+        /// Frühere Versionen konnten Dock Pilot über eine Aufgabe mit Administratorrechten starten. Gibt es sie noch,
+        /// Entfernen anbieten: Sonst liefe das Dock und alles, was daraus startet, als Administrator.
+        /// </summary>
+        private void CheckOldTask()
+        {
+            if (Demo.Active || _settings.KeepOldTask) return;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string command = Autostart.OldTaskCommand();
+                if (command == null) return;
+                try { _invoker.BeginInvoke((MethodInvoker)delegate { AskOldTask(command); }); } catch { }
+            });
+        }
+
+        private void AskOldTask(string command)
+        {
+            bool ours = Autostart.IsDockPilot(command);
+            string text = "In der Aufgabenplanung gibt es noch die Aufgabe „Dock Pilot“, die beim Anmelden mit Administratorrechten startet:\n\n" +
+                          (command.Length > 0 ? command : "(Ziel nicht lesbar)") + "\n\n" +
+                          (ours ? "Dock Pilot verwendet diesen Autostart nicht mehr: Damit liefe das Dock und alles, was Sie daraus starten, als Administrator."
+                                : "Das Ziel ist nicht Dock Pilot. Prüfen Sie die Aufgabe bitte selbst in der Aufgabenplanung.") +
+                          "\n\nAufgabe jetzt entfernen? Windows fragt dafür nach Administratorrechten." +
+                          (ours ? " Dock Pilot startet danach weiter mit Windows, aber mit normalen Rechten." : "");
+            DialogResult answer = MessageBox.Show(text, AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                ours ? MessageBoxDefaultButton.Button1 : MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes)
+            {
+                _settings.KeepOldTask = true; // nicht bei jedem Start erneut fragen
+                _settings.Save();
+                return;
+            }
+            if (!Autostart.RemoveOldTask())
+            {
+                MessageBox.Show("Die Aufgabe konnte nicht entfernt werden. Sie lässt sich auch in der Aufgabenplanung löschen (Aufgabe „Dock Pilot“).",
+                    AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (ours && !Autostart.IsEnabled) Autostart.Set(true);
         }
 
         // ------------------------------------------------------------------ Weitere Docks und Profile
@@ -422,30 +464,15 @@ namespace DockPilot
             }
             bool withAdmin, withHotkeys, withNetwork;
             if (!BackupDialog.Ask(owner, file, content, out withAdmin, out withHotkeys, out withNetwork)) return false;
-            string err = Backup.Import(content, withAdmin, withHotkeys, withNetwork);
+            string err = Backup.Import(content, withAdmin, withHotkeys, withNetwork, _settings);
             if (err != null)
             {
                 MessageBox.Show(owner, "Die Sicherung konnte nicht wiederhergestellt werden.\n\n" + err, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
-            // Zustände dieses PCs behalten (nicht Teil der Einstellungen eines anderen PCs)
-            bool navPinned = _settings.NavPinned;
-            string lastCheck = _settings.LastUpdateCheck;
-            bool updateCheck = _settings.UpdateCheck, autoInstall = _settings.AutoInstall;
+            // Die eingespielte Datei enthält schon die Zustände dieses PCs (Backup.ApplyLocal); zur Sicherheit noch einmal
             Settings loaded = Settings.Load();
-            loaded.FirstRun = false;
-            loaded.NavPinned = navPinned;
-            loaded.LastUpdateCheck = lastCheck;
-            // Update-Schalter gehören zu diesem PC: nicht aus der Sicherung übernehmen
-            loaded.UpdateCheck = updateCheck;
-            loaded.AutoInstall = autoInstall;
-            // Tastenkürzel des Docks nur mit Zustimmung aus der Sicherung, sonst bleibt das bisherige
-            if (!withHotkeys)
-            {
-                loaded.HotkeyModifiers = _settings.HotkeyModifiers;
-                loaded.HotkeyKey = _settings.HotkeyKey;
-            }
-            loaded.Profile = _settings.Profile; // das aktive Profil dieses PCs bleibt
+            Backup.ApplyLocal(loaded, _settings, withHotkeys);
             _settings.CopyFrom(loaded);
             _settings.Save();
             _dock.ApplySettings();

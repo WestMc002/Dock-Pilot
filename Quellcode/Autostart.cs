@@ -4,7 +4,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using System;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Security;
+using System.Text.RegularExpressions;
 using System.Security.Principal;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -67,6 +71,70 @@ namespace DockPilot
                 }
                 return true;
             }
+            catch { return false; }
+        }
+
+        // ------------------------------------------------------------------ alte Aufgabe (bis 1.62 im Code)
+
+        /// <summary>Name der früheren Aufgabe für den Autostart mit Administratorrechten.</summary>
+        private const string OldTaskName = "Dock Pilot";
+
+        private static string Schtasks
+        {
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe"); }
+        }
+
+        /// <summary>
+        /// Gibt es noch die frühere Aufgabe „Dock Pilot“ in der Aufgabenplanung? Rückgabe: ihr Ziel (Programm), "" wenn
+        /// das Ziel nicht lesbar ist, null wenn es die Aufgabe nicht gibt. Dauert etwas – nicht im UI-Thread aufrufen.
+        /// </summary>
+        public static string OldTaskCommand()
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo(Schtasks, "/Query /TN \"" + OldTaskName + "\" /XML");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                using (Process p = Process.Start(psi))
+                {
+                    string xml = p.StandardOutput.ReadToEnd();
+                    p.StandardError.ReadToEnd();
+                    if (!p.WaitForExit(10000) || p.ExitCode != 0) return null;
+                    Match m = Regex.Match(xml, "<Command>(.*?)</Command>", RegexOptions.Singleline);
+                    if (!m.Success) return "";
+                    SecurityElement e = SecurityElement.FromString("<c>" + m.Groups[1].Value + "</c>");
+                    return (e != null ? e.Text : m.Groups[1].Value).Trim().Trim('"');
+                }
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Zeigt das Ziel auf ein Dock Pilot (diese oder eine andere Kopie)?</summary>
+        public static bool IsDockPilot(string command)
+        {
+            if (string.IsNullOrEmpty(command)) return false;
+            try { return string.Equals(Path.GetFileName(Environment.ExpandEnvironmentVariables(command)), "Dock Pilot.exe", StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        /// <summary>Frühere Aufgabe entfernen (fragt nach Administratorrechten). Rückgabe true = entfernt.</summary>
+        public static bool RemoveOldTask()
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo(Schtasks, "/Delete /TN \"" + OldTaskName + "\" /F");
+                psi.UseShellExecute = true;
+                psi.Verb = "runas";
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                using (Process p = Process.Start(psi))
+                {
+                    if (p == null || !p.WaitForExit(20000)) return false;
+                    return p.ExitCode == 0;
+                }
+            }
+            catch (Win32Exception) { return false; } // Windows-Nachfrage abgebrochen
             catch { return false; }
         }
 

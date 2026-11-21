@@ -27,6 +27,8 @@ namespace DockPilot
         public string Problem;
         /// <summary>Ausführlicher Text zu <see cref="Problem"/> (für „Details“).</summary>
         public string ProblemDetail;
+        /// <summary>Das geprüfte Manifest (Bytes wie auf GitHub); das Update-Skript prüft es selbst noch einmal.</summary>
+        public byte[] Manifest;
     }
 
     /// <summary>
@@ -165,6 +167,7 @@ namespace DockPilot
             }
             info.ZipUrl = zipUrl;
             info.Sha256 = sha;
+            info.Manifest = manifest;
             return info;
         }
 
@@ -480,8 +483,21 @@ namespace DockPilot
 
         private static int _busy;
         private const string Running = "Ein Update läuft bereits.";
-        /// <summary>Name der Sperre, die das Update-Skript bis zu seinem Ende hält.</summary>
-        private const string LockName = @"Local\DockPilot-Update";
+        /// <summary>
+        /// Name der Sperre, die das Update-Skript bis zum Ende des Dateiaustauschs bzw. der Rücksicherung hält:
+        /// sitzungsübergreifend (Global\) und je Installationsziel (Prüfsumme des Programmordners), damit auch
+        /// Updates aus zwei angemeldeten Konten nie gleichzeitig dieselben Dateien ersetzen.
+        /// </summary>
+        private static string LockName
+        {
+            get
+            {
+                string dir = Path.GetFullPath(AppInfo.ExeDirectory).TrimEnd('\\').ToUpperInvariant();
+                using (SHA256 sha = SHA256.Create())
+                    return @"Global\DockPilot-Update-" +
+                           BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(dir))).Replace("-", "").Substring(0, 24);
+            }
+        }
 
         private static bool ScriptRunning()
         {
@@ -492,7 +508,7 @@ namespace DockPilot
                 m.Dispose();
                 return true;
             }
-            catch (UnauthorizedAccessException) { return true; } // vom Skript mit Administratorrechten angelegt
+            catch (UnauthorizedAccessException) { return true; } // vom Skript mit Administratorrechten oder aus einem anderen Konto angelegt
             catch { return false; }
         }
 
@@ -540,10 +556,20 @@ namespace DockPilot
             int pid = Process.GetCurrentProcess().Id;
             StringBuilder vars = new StringBuilder();
             vars.Append("$ProcessId = ").Append(pid).Append("\n");
+            // Manifest neben das ZIP legen: Das Skript prüft die Signatur selbst (bei Administratorrechten an seiner
+            // Kopie im geschützten Arbeitsordner) und nimmt die Prüfsumme nur aus dem geprüften Manifest
+            if (release.Manifest == null) throw new Exception(NoZip);
+            string manifestFile = Path.Combine(attempt, ManifestName(release.Version));
+            File.WriteAllBytes(manifestFile, release.Manifest);
             Var(vars, "Zip", zip);
+            Var(vars, "Manifest", manifestFile);
             Var(vars, "Exe", exe);
             Var(vars, "Version", release.Version);
             Var(vars, "Sha256", release.Sha256.ToUpperInvariant());
+            Var(vars, "AssetName", AssetName(release.Version));
+            Var(vars, "MainKey", MainKey);
+            Var(vars, "ReserveKey", ReserveKey);
+            Var(vars, "LockName", LockName);
             Var(vars, "Log", LogFile);
             Var(vars, "Work", work);
             Var(vars, "ExeName", ExeName);
@@ -605,9 +631,18 @@ namespace DockPilot
             string ps = Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe");
             // nur der feste Systempfad, kein Suchen über PATH oder den aktuellen Ordner
             if (!File.Exists(ps)) throw new Exception("Windows PowerShell wurde nicht gefunden.");
-            ProcessStartInfo start = new ProcessStartInfo(ps,
-                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " +
-                Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            // Kommentarzeilen und Einrückung weglassen: Die Befehlszeile darf höchstens 32767 Zeichen lang sein
+            StringBuilder compact = new StringBuilder();
+            foreach (string raw in script.Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                compact.Append(line).Append('\n');
+            }
+            string arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " +
+                               Convert.ToBase64String(Encoding.Unicode.GetBytes(compact.ToString()));
+            if (arguments.Length > 32000) throw new Exception("Das Update-Skript ist zu lang.");
+            ProcessStartInfo start = new ProcessStartInfo(ps, arguments);
             start.UseShellExecute = true;
             start.WindowStyle = ProcessWindowStyle.Hidden;
             start.WorkingDirectory = system;
@@ -726,8 +761,8 @@ namespace DockPilot
             catch { return null; }
         }
 
-        // Update-Skript. Davor setzt das Programm: $ProcessId, $Zip, $Exe, $Version, $Sha256, $Log, $Work,
-        // $ExeName, $ManualName, $Elevated, $Tray. Nur ASCII-Anführungszeichen verwenden.
+        // Update-Skript. Davor setzt das Programm: $ProcessId, $Zip, $Manifest, $Exe, $Version, $Sha256, $AssetName,
+        // $MainKey, $ReserveKey, $LockName, $Log, $Work, $ExeName, $ManualName, $Elevated, $Tray. Nur ASCII-Anführungszeichen verwenden.
         private const string InstallScript = @"
 $ErrorActionPreference = 'Stop'
 $target = Split-Path $Exe -Parent
@@ -737,7 +772,7 @@ $lock = $null
 $haveLock = $false
 try {
   # nur ein Update zur Zeit (Sperre bis zum Ende dieses Skripts)
-  $lock = New-Object System.Threading.Mutex($false, 'Local\DockPilot-Update')
+  $lock = New-Object System.Threading.Mutex($false, $LockName)
   try { $haveLock = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $haveLock = $true }
   if (-not $haveLock) { throw 'Ein anderes Update laeuft gerade.' }
   try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch {}
@@ -773,13 +808,53 @@ try {
     if (-not ($o -eq $admins -or $o -eq $system)) { throw 'Der Arbeitsordner fuer das Update ist nicht geschuetzt.' }
     $workReady = $true
     $zipWork = Join-Path $Work 'Update.zip'
+    $manifestWork = Join-Path $Work 'Update.manifest'
     Copy-Item -LiteralPath $Zip -Destination $zipWork -Force
+    Copy-Item -LiteralPath $Manifest -Destination $manifestWork -Force
   } else {
     $zipWork = $Zip
+    $manifestWork = $Manifest
   }
-  # Pruefsumme an der Datei pruefen, die tatsaechlich entpackt wird
+  # Signatur des Manifests selbst pruefen (eigene Herausgeberpruefung, an der Kopie, die verwendet wird)
+  $bytes = [System.IO.File]::ReadAllBytes($manifestWork)
+  if ($bytes.Length -gt 8192) { throw 'Das Manifest ist zu gross.' }
+  $marker = [System.Text.Encoding]::ASCII.GetBytes([string][char]10 + 'Signatur=')
+  $at = -1
+  for ($i = 0; $i -le $bytes.Length - $marker.Length -and $at -lt 0; $i++) {
+    $j = 0
+    while ($j -lt $marker.Length -and $bytes[$i + $j] -eq $marker[$j]) { $j++ }
+    if ($j -eq $marker.Length) { $at = $i }
+  }
+  if ($at -lt 0) { throw 'Im Manifest fehlt die Signatur.' }
+  $signed = New-Object byte[] ($at + 1)
+  [System.Array]::Copy($bytes, $signed, $at + 1)
+  $sig = [System.Convert]::FromBase64String([System.Text.Encoding]::ASCII.GetString($bytes, $at + $marker.Length, $bytes.Length - $at - $marker.Length).Trim())
+  $lines = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($signed).Split([char]10)
+  $names = @('Programm', 'Version', 'Datei', 'SHA256', 'Schluessel', 'Erstellt')
+  if ($lines.Count -ne 7 -or $lines[6] -ne '') { throw 'Das Manifest hat nicht den erwarteten Aufbau.' }
+  $mv = @{}
+  for ($i = 0; $i -lt 6; $i++) {
+    $p = $names[$i] + '='
+    if (-not $lines[$i].StartsWith($p, [System.StringComparison]::Ordinal)) { throw ('Im Manifest fehlt ' + $names[$i] + '.') }
+    $mv[$names[$i]] = $lines[$i].Substring($p.Length)
+  }
+  if ($mv['Schluessel'] -ceq 'Haupt') { $keyXml = $MainKey }
+  elseif ($mv['Schluessel'] -ceq 'Reserve') { $keyXml = $ReserveKey }
+  else { throw 'Unbekannter Schluessel im Manifest.' }
+  $csp = New-Object System.Security.Cryptography.CspParameters -ArgumentList 24
+  $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider -ArgumentList $csp
+  $rsa.PersistKeyInCsp = $false
+  $rsa.FromXmlString($keyXml)
+  $valid = $rsa.VerifyData($signed, 'SHA256', $sig)
+  $rsa.Clear()
+  if (-not $valid) { throw 'Die Signatur des Updates ist ungueltig.' }
+  if ($mv['Programm'] -cne 'Dock Pilot' -or $mv['Version'] -cne $Version -or $mv['Datei'] -cne $AssetName) { throw 'Das Manifest passt nicht zu diesem Update.' }
+  if ($mv['SHA256'] -cnotmatch '^[0-9a-f]{64}$') { throw 'Die Pruefsumme im Manifest ist ungueltig.' }
+  $expected = $mv['SHA256'].ToUpperInvariant()
+  if ($expected -ne $Sha256) { throw 'Die Pruefsumme im Manifest weicht von der Pruefung im Programm ab.' }
+  # Pruefsumme aus dem gepruften Manifest an der Datei pruefen, die tatsaechlich entpackt wird
   $hash = (Get-FileHash -LiteralPath $zipWork -Algorithm SHA256).Hash
-  if ($hash -ne $Sha256) { throw ('Die Pruefsumme des Updates stimmt nicht (erwartet ' + $Sha256 + ', erhalten ' + $hash + ').') }
+  if ($hash -ne $expected) { throw ('Die Pruefsumme des Updates stimmt nicht (erwartet ' + $expected + ', erhalten ' + $hash + ').') }
   $dir = Join-Path $Work 'Neu'
   if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
   Expand-Archive -LiteralPath $zipWork -DestinationPath $dir -Force
@@ -813,6 +888,7 @@ try {
   Remove-Item -LiteralPath $alt -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $zipWork -Force -ErrorAction SilentlyContinue
+  if ($Elevated) { Remove-Item -LiteralPath $manifestWork -Force -ErrorAction SilentlyContinue }
   $result = 'OK ' + $Version
 } catch {
   $result = 'FEHLER ' + $_.Exception.Message

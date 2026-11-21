@@ -132,6 +132,7 @@ namespace DockPilot
             d.FirstRun = false;
             d.UpdateCheck = _edit.UpdateCheck;
             d.AutoInstall = _edit.AutoInstall;
+            d.KeepOldTask = _edit.KeepOldTask;
             d.LastUpdateCheck = _edit.LastUpdateCheck;
             d.NavPinned = _edit.NavPinned;
             _edit.CopyFrom(d);
@@ -156,6 +157,7 @@ namespace DockPilot
             _edit.LastUpdateCheck = _original.LastUpdateCheck;
             _edit.UpdateCheck = _original.UpdateCheck;
             _edit.AutoInstall = _original.AutoInstall;
+            _edit.KeepOldTask = _original.KeepOldTask;
             _edit.NavPinned = _original.NavPinned;
             _edit.Profile = _original.Profile; // wird im Tray-Menü umgeschaltet
             // Werte, die außerhalb dieses Fensters geändert werden (Update-Prüfung, Info-Fenster, Tray-Menü, Stecknadel),
@@ -164,7 +166,7 @@ namespace DockPilot
             foreach (string line in _edit.ToIniText().Split('\n'))
             {
                 if (line.StartsWith("ErsterStart=") || line.StartsWith("LetzteUpdatePruefung=") || line.StartsWith("UpdatesPruefen=") ||
-                    line.StartsWith("AutomatischAktualisieren=") || line.StartsWith("NavigationAngepinnt=") || line.StartsWith("Profil=")) continue;
+                    line.StartsWith("AutomatischAktualisieren=") || line.StartsWith("AlteAufgabeBehalten=") || line.StartsWith("NavigationAngepinnt=") || line.StartsWith("Profil=")) continue;
                 sb.Append(line).Append('\n');
             }
             return sb.ToString();

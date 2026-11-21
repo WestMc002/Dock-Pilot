@@ -148,8 +148,8 @@ namespace DockPilot
         /// <summary>
         /// Verweist der Pfad (nach Auflösen der Umgebungsvariablen) auf einen anderen Rechner? Schon das Laden des
         /// Symbols würde ihn ansprechen, und Windows meldet sich dabei unter Umständen mit dem eigenen Konto an.
-        /// Erkannt werden \\Server\Freigabe, \\?\UNC\…, //Server/… und file://Server/…; verbundene Laufwerke
-        /// (z. B. Z:) gelten als lokal.
+        /// Erkannt werden \\Server\Freigabe, \\?\UNC\…, //Server/…, file://Server/… und verbundene Netzlaufwerke
+        /// (z. B. Z:, über den Laufwerkstyp).
         /// </summary>
         public static bool IsNetwork(string path)
         {
@@ -166,7 +166,14 @@ namespace DockPilot
             {
                 Uri uri;
                 if (!Uri.TryCreate(s, UriKind.Absolute, out uri)) return true; // unklar: lieber als Netzwerk behandeln
-                return uri.IsUnc || (uri.Host.Length > 0 && !uri.IsLoopback);
+                if (uri.IsUnc || (uri.Host.Length > 0 && !uri.IsLoopback)) return true;
+                s = uri.LocalPath;
+            }
+            // verbundenes Netzlaufwerk (z. B. Z:): Der Laufwerkstyp lässt sich abfragen, ohne den Server anzusprechen
+            if (s.Length >= 2 && s[1] == ':' && char.IsLetter(s[0]))
+            {
+                try { return new DriveInfo(s.Substring(0, 1)).DriveType == DriveType.Network; }
+                catch { return false; }
             }
             return false;
         }
@@ -192,7 +199,7 @@ namespace DockPilot
         /// die bisherigen Einstellungen und Einträge bleiben als „.vor-import“ daneben liegen. Geht beim Ersetzen etwas
         /// schief, kommt der bisherige Stand zurück. Rückgabe: Fehlertext oder null.
         /// </summary>
-        public static string Import(BackupContent c, bool withAdmin, bool withHotkeys, bool withNetwork)
+        public static string Import(BackupContent c, bool withAdmin, bool withHotkeys, bool withNetwork, Settings current)
         {
             string stage = Path.Combine(Settings.DataDirectory, "Wiederherstellen-" + Guid.NewGuid().ToString("N"));
             List<string[]> plan = new List<string[]>();   // { Hilfsdatei, Ziel, Sicherung des alten Stands oder null }
@@ -224,8 +231,14 @@ namespace DockPilot
                     File.WriteAllText(staged, DockStore.Serialize(items), new UTF8Encoding(false));
                     plan.Add(new[] { staged, DockStore.FileFor(dock.Key), null });
                 }
+                // Einstellungen schon hier endgültig machen (Zustände dieses PCs und die Zustimmung zum Dock-Kürzel),
+                // damit nach einem Abbruch mitten im Einspielen nie die unveränderten Werte der Sicherung gelten
+                string raw = Path.Combine(stage, "e-roh");
+                File.WriteAllBytes(raw, c.SettingsData);
+                Settings final = Settings.LoadFrom(raw);
+                ApplyLocal(final, current, withHotkeys);
                 string settings = Path.Combine(stage, "e");
-                File.WriteAllBytes(settings, c.SettingsData);
+                File.WriteAllText(settings, final.ToIniText(), new UTF8Encoding(false));
                 plan.Add(new[] { settings, Settings.DataPath, null }); // zuletzt
 
                 // 2. bisherigen Stand sichern – klappt das nicht, wird nichts ersetzt
@@ -268,6 +281,26 @@ namespace DockPilot
             }
             TryDelete(stage);
             return null;
+        }
+
+        /// <summary>
+        /// Werte, die zu diesem PC gehören, aus den bisherigen Einstellungen übernehmen: Update-Schalter, letzte
+        /// Prüfung, Stecknadel, aktives Profil; das Dock-Kürzel nur mit Zustimmung aus der Sicherung.
+        /// </summary>
+        public static void ApplyLocal(Settings target, Settings current, bool withHotkeys)
+        {
+            target.FirstRun = false;
+            if (current == null) return;
+            target.NavPinned = current.NavPinned;
+            target.LastUpdateCheck = current.LastUpdateCheck;
+            target.UpdateCheck = current.UpdateCheck;
+            target.AutoInstall = current.AutoInstall;
+            target.Profile = current.Profile;
+            if (!withHotkeys)
+            {
+                target.HotkeyModifiers = current.HotkeyModifiers;
+                target.HotkeyKey = current.HotkeyKey;
+            }
         }
 
         private static void TryDelete(string dir)

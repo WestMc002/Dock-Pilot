@@ -101,6 +101,7 @@ namespace DockPilot
         public bool FirstRun = true;
         public bool UpdateCheck = true;           // kurz nach jedem Start (und alle 6 Stunden) auf GitHub nach neuen Versionen sehen
         public bool AutoInstall = false;          // neue Version ohne Rückfrage installieren, sobald Dock Pilot nicht beschäftigt ist
+        public bool KeepOldTask = false;          // alte Aufgabe „Dock Pilot“ (Autostart mit Administratorrechten) behalten, nicht mehr fragen
         public string LastUpdateCheck = "";       // Zeitpunkt der letzten erfolgreichen Prüfung (UTC, ISO 8601)
         public bool NavPinned = true;             // Einstellungsfenster: Navigation angepinnt (wird sofort gespeichert)
 
@@ -123,7 +124,7 @@ namespace DockPilot
             HideOnFullscreen = o.HideOnFullscreen; Locked = o.Locked; Animate = o.Animate;
             AnimSpeed = o.AnimSpeed; AlwaysOnTop = o.AlwaysOnTop; RaiseOnHover = o.RaiseOnHover;
             HotkeyModifiers = o.HotkeyModifiers; HotkeyKey = o.HotkeyKey;
-            FirstRun = o.FirstRun; UpdateCheck = o.UpdateCheck; AutoInstall = o.AutoInstall; LastUpdateCheck = o.LastUpdateCheck; NavPinned = o.NavPinned;
+            FirstRun = o.FirstRun; UpdateCheck = o.UpdateCheck; AutoInstall = o.AutoInstall; KeepOldTask = o.KeepOldTask; LastUpdateCheck = o.LastUpdateCheck; NavPinned = o.NavPinned;
             for (int i = 0; i < ExtraDocks; i++) Extra[i] = o.Extra[i].Clone();
             Profile = o.Profile;
         }
@@ -188,8 +189,14 @@ namespace DockPilot
 
         public static Settings Load()
         {
+            return LoadFrom(DataPath);
+        }
+
+        /// <summary>Einstellungen aus einer beliebigen Datei (z. B. aus einer Sicherung, bevor sie eingespielt wird).</summary>
+        public static Settings LoadFrom(string path)
+        {
             Settings s = new Settings();
-            Dictionary<string, string> v = Ini.ReadFlat(DataPath);
+            Dictionary<string, string> v = Ini.ReadFlat(path);
             if (v == null) return s;
             s.Monitor = Ini.GetInt(v, "Bildschirm", s.Monitor, -1, 16);
             s.Edge = (DockEdge)Ini.GetInt(v, "Rand", (int)s.Edge, 0, 3);
@@ -253,6 +260,7 @@ namespace DockPilot
             s.FirstRun = Ini.GetBool(v, "ErsterStart", s.FirstRun);
             s.UpdateCheck = Ini.GetBool(v, "UpdatesPruefen", s.UpdateCheck);
             s.AutoInstall = Ini.GetBool(v, "AutomatischAktualisieren", s.AutoInstall);
+            s.KeepOldTask = Ini.GetBool(v, "AlteAufgabeBehalten", s.KeepOldTask);
             s.NavPinned = Ini.GetBool(v, "NavigationAngepinnt", s.NavPinned);
             s.Profile = CleanProfile(Ini.Get(v, "Profil", ""));
             for (int i = 0; i < ExtraDocks; i++)
@@ -362,6 +370,8 @@ namespace DockPilot
             sb.AppendLine("UpdatesPruefen=" + B(UpdateCheck));
             sb.AppendLine("; Neue Version ohne Rueckfrage installieren, sobald Dock Pilot nicht beschaeftigt ist (1 = ja)");
             sb.AppendLine("AutomatischAktualisieren=" + B(AutoInstall));
+            sb.AppendLine("; Alte Aufgabe \"Dock Pilot\" (Autostart mit Administratorrechten) behalten und nicht mehr nachfragen (1 = ja)");
+            sb.AppendLine("AlteAufgabeBehalten=" + B(KeepOldTask));
             sb.AppendLine("LetzteUpdatePruefung=" + LastUpdateCheck);
             sb.AppendLine("NavigationAngepinnt=" + B(NavPinned));
             sb.AppendLine("; aktives Profil (Einträge aller Docks), leer = Standard");
