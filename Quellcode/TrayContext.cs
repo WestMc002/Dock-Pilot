@@ -127,7 +127,7 @@ namespace DockPilot
             // ---------- Updates (Vorlage: WindowGrid / Fensterpositionen wiederherstellen) ----------
             if (afterUpdate)
             {
-                string result = Updater.LastResult();
+                string result = Updater.LastResult(Program.UpdateAttempt);
                 // kurze, verständliche Meldung; der technische Text steht im Fehlerprotokoll
                 if (result != null && result.StartsWith("OK "))
                     _tray.ShowBalloonTip(6000, "Dock Pilot aktualisiert", "Version " + result.Substring(2).Trim() + " ist installiert.", ToolTipIcon.Info);

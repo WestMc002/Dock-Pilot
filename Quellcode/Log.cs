@@ -11,7 +11,7 @@ namespace DockPilot
 {
     /// <summary>
     /// Fehlerprotokoll Fehler.log im Datenordner (wie Wake on LAN). Schreibt nur bei Fehlern,
-    /// wirft selbst nie eine Ausnahme und kürzt die Datei, wenn sie größer als 256 KB wird.
+    /// wirft selbst nie eine Ausnahme und benennt die Datei ab 256 KB in Fehler.alt.log um.
     /// </summary>
     internal static class Log
     {
@@ -34,13 +34,13 @@ namespace DockPilot
                     string path = FilePath;
                     try
                     {
+                        // ab 256 KB nicht einlesen und kürzen, sondern in Fehler.alt.log umbenennen
                         FileInfo fi = new FileInfo(path);
                         if (fi.Exists && fi.Length > MaxBytes)
                         {
-                            // ältere Hälfte verwerfen
-                            string all = File.ReadAllText(path, Encoding.UTF8);
-                            int cut = all.IndexOf('\n', all.Length / 2);
-                            File.WriteAllText(path, cut > 0 ? all.Substring(cut + 1) : "", new UTF8Encoding(false));
+                            string old = Path.Combine(Settings.DataDirectory, "Fehler.alt.log");
+                            if (File.Exists(old)) File.Delete(old);
+                            File.Move(path, old);
                         }
                     }
                     catch { }

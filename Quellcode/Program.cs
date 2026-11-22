@@ -12,6 +12,9 @@ namespace DockPilot
 {
     internal static class Program
     {
+        /// <summary>Versuchskennung aus „--nach-update &lt;Kennung&gt;“ (ab 1.71), sonst null.</summary>
+        internal static string UpdateAttempt;
+
         [STAThread]
         private static int Main(string[] args)
         {
@@ -29,6 +32,9 @@ namespace DockPilot
             {
                 // Neustart durch das Update-Skript: warten, bis sich die alte Instanz beendet hat
                 bool afterUpdate = Array.Exists(args, a => string.Equals(a, "--nach-update", StringComparison.OrdinalIgnoreCase));
+                // ab 1.71 folgt die Versuchskennung (32 Hex-Zeichen): nur das Ergebnis genau dieses Versuchs lesen
+                int at = Array.FindIndex(args, a => string.Equals(a, "--nach-update", StringComparison.OrdinalIgnoreCase));
+                if (at >= 0 && at + 1 < args.Length && Updater.IsAttemptId(args[at + 1])) UpdateAttempt = args[at + 1];
                 if (!created && afterUpdate)
                 {
                     try { created = mutex.WaitOne(10000); }
@@ -70,14 +76,8 @@ namespace DockPilot
         /// <summary>Technische Details gehören ins Protokoll, nicht in die Meldung.</summary>
         internal static void Log(Exception ex)
         {
-            if (ex == null) return;
-            try
-            {
-                Directory.CreateDirectory(Settings.DataDirectory);
-                File.AppendAllText(Path.Combine(Settings.DataDirectory, "Fehler.log"),
-                    DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss") + " · " + AppInfo.Version + "\r\n" + ex + "\r\n\r\n");
-            }
-            catch { }
+            // über das gemeinsame Fehlerprotokoll (ab 256 KB wird es in Fehler.alt.log umbenannt)
+            DockPilot.Log.Write("Fehler", ex);
         }
     }
 }
