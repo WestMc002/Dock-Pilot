@@ -495,8 +495,7 @@ namespace DockPilot
         /// </summary>
         public static string InstallBlocker()
         {
-            string dir = AppDomain.CurrentDomain.BaseDirectory;
-            if (File.Exists(Path.Combine(dir, "Erstellen.bat")))
+            if (InProjectFolder)
                 return "Im Projektordner (mit Erstellen.bat) wird nicht automatisch aktualisiert – dort entsteht die EXE beim Erstellen.";
             // Läuft Dock Pilot gerade mit Administratorrechten (von Hand gestartet), würden Update-Skript und Neustart
             // erhöht laufen, auch wenn der Programmordner beschreibbar ist (Arbeitsordner im Temp-Ordner). Deshalb
@@ -505,6 +504,12 @@ namespace DockPilot
                 return "Dock Pilot läuft gerade mit Administratorrechten. Bitte Dock Pilot normal starten und dann aktualisieren.";
             if (PendingRestore() != null) return PendingText;
             return null;
+        }
+
+        /// <summary>Läuft die EXE im Projektordner (Erstellen.bat daneben)? Dort entsteht sie beim Bauen.</summary>
+        private static bool InProjectFolder
+        {
+            get { return File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Erstellen.bat")); }
         }
 
         private static bool CanWrite(string dir)
@@ -788,6 +793,8 @@ namespace DockPilot
         /// </summary>
         public static bool OfferRepair(IWin32Window owner, bool tray)
         {
+            // im Projektordner (Erstellen.bat neben der EXE) wird nie etwas zurückgesetzt, wie beim Update
+            if (InProjectFolder) return false;
             string dir = PendingRestore();
             if (dir == null) return false;
             Log.Write("Update", "Nicht abgeschlossenes Update gefunden: " + dir);
@@ -805,6 +812,7 @@ namespace DockPilot
 
         private static void Repair(string dir, bool tray)
         {
+            if (InProjectFolder) throw new Exception("Im Projektordner wird nichts zurückgesetzt.");
             string data = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
             bool protectedDir = string.Equals(Path.GetDirectoryName(dir), data, StringComparison.OrdinalIgnoreCase);
             string exe = Application.ExecutablePath;
@@ -1406,6 +1414,8 @@ try {
   $deadline = (Get-Date).AddSeconds(60)
   while ((Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
   if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) { throw 'Dock Pilot wurde nicht beendet.' }
+  # im Projektordner (Erstellen.bat neben der EXE) nie etwas zuruecksetzen
+  if (Test-Path -LiteralPath (Join-Path $target 'Erstellen.bat')) { throw 'Im Projektordner wird nichts zurueckgesetzt.' }
   $item = Get-Item -LiteralPath $Work -Force
   if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Unerwarteter Arbeitsordner.' }
   if ($Elevated) {
