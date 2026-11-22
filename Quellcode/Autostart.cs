@@ -7,9 +7,11 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Security;
-using System.Text.RegularExpressions;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -77,65 +79,151 @@ namespace DockPilot
         // ------------------------------------------------------------------ alte Aufgabe (bis 1.62 im Code)
 
         /// <summary>Name der früheren Aufgabe für den Autostart mit Administratorrechten.</summary>
-        private const string OldTaskName = "Dock Pilot";
+        public const string TaskName = "Dock Pilot";
 
-        private static string Schtasks
+        /// <summary>
+        /// Alte Aufgabe "Dock Pilot" aus früheren Versionen über die Aufgabenplanungs-Schnittstelle (COM) lesen:
+        /// alle Aktionen, Benutzer, Ausführungsebene und Trigger. null = es gibt keine Aufgabe; bei einem Lesefehler
+        /// ist Error gesetzt (wird gesondert protokolliert, nicht als "keine Aufgabe" gewertet).
+        /// </summary>
+        public static OldTask QueryOldTask()
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe"); }
+            object service = null;
+            try
+            {
+                Type type = Type.GetTypeFromProgID("Schedule.Service");
+                if (type == null) return OldTask.Failed("Aufgabenplanung nicht verfügbar.");
+                service = Activator.CreateInstance(type);
+                Call(service, "Connect");
+                object folder = Call(service, "GetFolder", "\\");
+                object task;
+                try { task = Call(folder, "GetTask", TaskName); }
+                catch (Exception ex)
+                {
+                    COMException com = Inner(ex) as COMException;
+                    if (com != null && (com.ErrorCode == unchecked((int)0x80070002) || com.ErrorCode == unchecked((int)0x80070003))) return null; // gibt es nicht
+                    return OldTask.Failed(Inner(ex).Message);
+                }
+                OldTask info = new OldTask();
+                object def = Get(task, "Definition");
+                object principal = Get(def, "Principal");
+                info.User = Convert.ToString(Get(principal, "UserId"));
+                info.Highest = Convert.ToInt32(Get(principal, "RunLevel")) == 1; // TASK_RUNLEVEL_HIGHEST
+                object actions = Get(def, "Actions");
+                int count = Convert.ToInt32(Get(actions, "Count"));
+                for (int i = 1; i <= count; i++)
+                {
+                    object action = Item(actions, i);
+                    int kind = Convert.ToInt32(Get(action, "Type"));
+                    if (kind == 0) // TASK_ACTION_EXEC
+                    {
+                        string path = Convert.ToString(Get(action, "Path")).Trim().Trim('"');
+                        string args = Convert.ToString(Get(action, "Arguments"));
+                        info.Commands.Add(string.IsNullOrEmpty(args) ? path : path + " " + args);
+                        info.Paths.Add(path);
+                    }
+                    else info.Commands.Add("(andere Aktion, Typ " + kind + ")");
+                }
+                // Vergleichswert über die vollständige Aufgabendefinition (XML: Aktionen mit Arbeitsverzeichnis,
+                // Trigger, Benutzer, Ausführungsebene, Einstellungen)
+                info.Fingerprint = HashOf(Convert.ToString(Get(task, "Xml")));
+                return info;
+            }
+            catch (Exception ex) { return OldTask.Failed(Inner(ex).Message); }
+            finally
+            {
+                if (service != null) try { Marshal.ReleaseComObject(service); } catch { }
+            }
+        }
+
+        private static string HashOf(string text)
+        {
+            using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text ?? ""))).Replace("-", "");
+        }
+
+        private static Exception Inner(Exception ex)
+        {
+            while (ex is TargetInvocationException && ex.InnerException != null) ex = ex.InnerException;
+            return ex;
+        }
+
+        private static object Call(object o, string name, params object[] args)
+        {
+            return o.GetType().InvokeMember(name, BindingFlags.InvokeMethod, null, o, args);
+        }
+
+        private static object Get(object o, string name)
+        {
+            return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null);
+        }
+
+        private static object Item(object collection, int index)
+        {
+            return collection.GetType().InvokeMember("Item", BindingFlags.GetProperty, null, collection, new object[] { index });
+        }
+
+        /// <summary>Zeigt die Aufgabe nur auf diese Dock Pilot.exe?</summary>
+        public static bool IsOwnExe(OldTask task)
+        {
+            if (task == null || task.Paths.Count == 0 || task.Paths.Count != task.Commands.Count) return false;
+            foreach (string path in task.Paths)
+            {
+                try
+                {
+                    if (!string.Equals(Path.GetFullPath(Environment.ExpandEnvironmentVariables(path)),
+                                       Path.GetFullPath(Application.ExecutablePath), StringComparison.OrdinalIgnoreCase)) return false;
+                }
+                catch { return false; }
+            }
+            return true;
         }
 
         /// <summary>
-        /// Gibt es noch die frühere Aufgabe „Dock Pilot“ in der Aufgabenplanung? Rückgabe: ihr Ziel (Programm), "" wenn
-        /// das Ziel nicht lesbar ist, null wenn es die Aufgabe nicht gibt. Dauert etwas – nicht im UI-Thread aufrufen.
+        /// Alte Aufgabe entfernen (Windows fragt nach Administratorrechten). Die letzte Prüfung läuft im erhöhten
+        /// Prozess unmittelbar vor dem Löschen: Nur wenn die vollständige Definition noch genau der angezeigten
+        /// entspricht (SHA-256 des Aufgaben-XML), wird gelöscht. true = entfernt bzw. schon weg.
         /// </summary>
-        public static string OldTaskCommand()
+        public static bool RemoveOldTask(OldTask shown)
         {
+            if (shown == null || shown.Error != null || string.IsNullOrEmpty(shown.Fingerprint)) return false;
+            string script =
+                "$ErrorActionPreference = 'Stop'\n" +
+                "$Name = '" + TaskName + "'\n" +
+                "$Hash = '" + shown.Fingerprint + "'\n" +
+                "try {\n" +
+                "$s = New-Object -ComObject Schedule.Service\n" +
+                "$s.Connect()\n" +
+                "$f = $s.GetFolder('\\')\n" +
+                "try { $t = $f.GetTask($Name) } catch { exit 3 }\n" +
+                "$sha = [System.Security.Cryptography.SHA256]::Create()\n" +
+                "$h = [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes([string]$t.Xml))).Replace('-', '')\n" +
+                "if ($h -ne $Hash) { exit 2 }\n" +
+                "$f.DeleteTask($Name, 0)\n" +
+                "exit 0\n" +
+                "} catch { exit 1 }\n";
             try
             {
-                ProcessStartInfo psi = new ProcessStartInfo(Schtasks, "/Query /TN \"" + OldTaskName + "\" /XML");
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.RedirectStandardOutput = true;
-                psi.RedirectStandardError = true;
-                using (Process p = Process.Start(psi))
-                {
-                    string xml = p.StandardOutput.ReadToEnd();
-                    p.StandardError.ReadToEnd();
-                    if (!p.WaitForExit(10000) || p.ExitCode != 0) return null;
-                    Match m = Regex.Match(xml, "<Command>(.*?)</Command>", RegexOptions.Singleline);
-                    if (!m.Success) return "";
-                    SecurityElement e = SecurityElement.FromString("<c>" + m.Groups[1].Value + "</c>");
-                    return (e != null ? e.Text : m.Groups[1].Value).Trim().Trim('"');
-                }
-            }
-            catch { return null; }
-        }
-
-        /// <summary>Zeigt das Ziel auf ein Dock Pilot (diese oder eine andere Kopie)?</summary>
-        public static bool IsDockPilot(string command)
-        {
-            if (string.IsNullOrEmpty(command)) return false;
-            try { return string.Equals(Path.GetFileName(Environment.ExpandEnvironmentVariables(command)), "Dock Pilot.exe", StringComparison.OrdinalIgnoreCase); }
-            catch { return false; }
-        }
-
-        /// <summary>Frühere Aufgabe entfernen (fragt nach Administratorrechten). Rückgabe true = entfernt.</summary>
-        public static bool RemoveOldTask()
-        {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo(Schtasks, "/Delete /TN \"" + OldTaskName + "\" /F");
-                psi.UseShellExecute = true;
-                psi.Verb = "runas";
+                string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                string ps = Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe");
+                if (!File.Exists(ps)) return false;
+                ProcessStartInfo psi = new ProcessStartInfo(ps, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " +
+                    Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+                psi.WorkingDirectory = system;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
+                if (IsElevated) { psi.UseShellExecute = false; psi.CreateNoWindow = true; }
+                else { psi.UseShellExecute = true; psi.Verb = "runas"; }
                 using (Process p = Process.Start(psi))
                 {
-                    if (p == null || !p.WaitForExit(20000)) return false;
-                    return p.ExitCode == 0;
+                    if (p == null || !p.WaitForExit(30000)) return false;
+                    if (p.ExitCode == 2) Log.Write("Alte Aufgabe entfernen", "Aufgabe hat sich seit der Rückfrage verändert – nichts gelöscht.");
+                    else if (p.ExitCode == 1) Log.Write("Alte Aufgabe entfernen", "Aufgabenplanung nicht lesbar oder Löschen fehlgeschlagen.");
+                    if (p.ExitCode != 0 && p.ExitCode != 3) return false;
                 }
+                return QueryOldTask() == null;
             }
-            catch (Win32Exception) { return false; } // Windows-Nachfrage abgebrochen
-            catch { return false; }
+            catch (Win32Exception) { return false; } // Nachfrage abgebrochen
+            catch (Exception ex) { Log.Write("Alte Aufgabe entfernen", ex); return false; }
         }
 
         /// <summary>
@@ -157,6 +245,24 @@ namespace DockPilot
                 }
             }
             catch { }
+        }
+    }
+
+    /// <summary>Gelesene alte Aufgabe "Dock Pilot" (siehe Autostart.QueryOldTask).</summary>
+    internal sealed class OldTask
+    {
+        public readonly List<string> Commands = new List<string>(); // alle Aktionen zur Anzeige
+        public readonly List<string> Paths = new List<string>();    // Programme der Exec-Aktionen
+        public string User = "";
+        public bool Highest;          // "Mit höchsten Privilegien ausführen"
+        public string Fingerprint = "";
+        public string Error;          // Lesefehler (null = gelesen)
+
+        public static OldTask Failed(string error)
+        {
+            OldTask t = new OldTask();
+            t.Error = string.IsNullOrEmpty(error) ? "Unbekannter Fehler." : error;
+            return t;
         }
     }
 }

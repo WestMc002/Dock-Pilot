@@ -128,11 +128,17 @@ namespace DockPilot
             if (afterUpdate)
             {
                 string result = Updater.LastResult();
-                if (result != null && result.StartsWith("OK"))
+                // kurze, verständliche Meldung; der technische Text steht im Fehlerprotokoll
+                if (result != null && result.StartsWith("OK "))
                     _tray.ShowBalloonTip(6000, "Dock Pilot aktualisiert", "Version " + result.Substring(2).Trim() + " ist installiert.", ToolTipIcon.Info);
+                else if (result != null && result.StartsWith("ZURUECK"))
+                    _tray.ShowBalloonTip(6000, "Vorherige Version wiederhergestellt", "Das Update kann jetzt erneut installiert werden.", ToolTipIcon.Info);
                 else if (result != null)
-                    _tray.ShowBalloonTip(8000, "Update fehlgeschlagen",
-                        result.Replace("FEHLER", "").Trim() + " – die bisherige Version läuft weiter.", ToolTipIcon.Warning);
+                {
+                    Log.Write("Update", result);
+                    _tray.ShowBalloonTip(8000, "Update nicht installiert",
+                        "Die bisherige Version läuft weiter. Einzelheiten stehen im Fehlerprotokoll.", ToolTipIcon.Warning);
+                }
                 // Einstellungen waren vor dem Update offen: wieder öffnen
                 if (!trayOnly) _invoker.BeginInvoke((MethodInvoker)ShowSettings);
             }
@@ -181,19 +187,27 @@ namespace DockPilot
             if (Demo.Active || _settings.KeepOldTask) return;
             ThreadPool.QueueUserWorkItem(delegate
             {
-                string command = Autostart.OldTaskCommand();
-                if (command == null) return;
-                try { _invoker.BeginInvoke((MethodInvoker)delegate { AskOldTask(command); }); } catch { }
+                OldTask task = Autostart.QueryOldTask();
+                if (task == null) return; // keine alte Aufgabe
+                if (task.Error != null)
+                {
+                    // Lesefehler gesondert protokollieren (nicht als „keine Aufgabe“ werten); beim nächsten Start erneut versuchen
+                    Log.Write("Alte Aufgabe prüfen", "Aufgabenplanung nicht lesbar: " + task.Error);
+                    return;
+                }
+                try { _invoker.BeginInvoke((MethodInvoker)delegate { AskOldTask(task); }); } catch { }
             });
         }
 
-        private void AskOldTask(string command)
+        private void AskOldTask(OldTask task)
         {
-            bool ours = Autostart.IsDockPilot(command);
-            string text = "In der Aufgabenplanung gibt es noch die Aufgabe „Dock Pilot“, die beim Anmelden mit Administratorrechten startet:\n\n" +
-                          (command.Length > 0 ? command : "(Ziel nicht lesbar)") + "\n\n" +
+            bool ours = Autostart.IsOwnExe(task);
+            string cmds = task.Commands.Count > 0 ? string.Join("\n", task.Commands.ToArray()) : "(keine Aktion)";
+            string text = "In der Aufgabenplanung gibt es noch die Aufgabe „Dock Pilot“ aus einer früheren Version" +
+                          (task.Highest ? " (startet mit Administratorrechten)" : "") + ":\n\n" + cmds +
+                          (task.User.Length > 0 ? "\nBenutzer: " + task.User : "") + "\n\n" +
                           (ours ? "Dock Pilot verwendet diesen Autostart nicht mehr: Damit liefe das Dock und alles, was Sie daraus starten, als Administrator."
-                                : "Das Ziel ist nicht Dock Pilot. Prüfen Sie die Aufgabe bitte selbst in der Aufgabenplanung.") +
+                                : "Die Aufgabe startet nicht nur dieses Dock Pilot. Prüfen Sie sie bitte genau.") +
                           "\n\nAufgabe jetzt entfernen? Windows fragt dafür nach Administratorrechten." +
                           (ours ? " Dock Pilot startet danach weiter mit Windows, aber mit normalen Rechten." : "");
             DialogResult answer = MessageBox.Show(text, AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
@@ -204,13 +218,16 @@ namespace DockPilot
                 _settings.Save();
                 return;
             }
-            if (!Autostart.RemoveOldTask())
+            if (!Autostart.RemoveOldTask(task))
             {
-                MessageBox.Show("Die Aufgabe konnte nicht entfernt werden. Sie lässt sich auch in der Aufgabenplanung löschen (Aufgabe „Dock Pilot“).",
+                MessageBox.Show("Die Aufgabe wurde nicht entfernt (Nachfrage abgebrochen oder Aufgabe inzwischen verändert). " +
+                    "Dock Pilot fragt beim nächsten Start erneut.",
                     AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            if (ours && !Autostart.IsEnabled) Autostart.Set(true);
+            if (ours && !Autostart.IsEnabled && !Autostart.Set(true))
+                MessageBox.Show("Die Aufgabe ist entfernt, aber der Autostart konnte nicht eingerichtet werden.",
+                    AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         // ------------------------------------------------------------------ Weitere Docks und Profile

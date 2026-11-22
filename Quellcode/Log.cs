@@ -1,0 +1,61 @@
+﻿// Dock Pilot – Programmleiste am Bildschirmrand (Nachfolger von RocketDock)
+// Copyright (C) 2026 Günther Schoder · https://www.westmc002.de
+// Lizenz: GNU General Public License v3.0 oder später (siehe LICENSE)
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+using System;
+using System.IO;
+using System.Text;
+
+namespace DockPilot
+{
+    /// <summary>
+    /// Fehlerprotokoll Fehler.log im Datenordner (wie Wake on LAN). Schreibt nur bei Fehlern,
+    /// wirft selbst nie eine Ausnahme und kürzt die Datei, wenn sie größer als 256 KB wird.
+    /// </summary>
+    internal static class Log
+    {
+        private static readonly object Gate = new object();
+        private const long MaxBytes = 256 * 1024;
+
+        public static string FilePath
+        {
+            get { return Path.Combine(Settings.DataDirectory, "Fehler.log"); }
+        }
+
+        public static void Write(string area, string text)
+        {
+            if (Demo.Active) return;
+            try
+            {
+                lock (Gate)
+                {
+                    Directory.CreateDirectory(Settings.DataDirectory);
+                    string path = FilePath;
+                    try
+                    {
+                        FileInfo fi = new FileInfo(path);
+                        if (fi.Exists && fi.Length > MaxBytes)
+                        {
+                            // ältere Hälfte verwerfen
+                            string all = File.ReadAllText(path, Encoding.UTF8);
+                            int cut = all.IndexOf('\n', all.Length / 2);
+                            File.WriteAllText(path, cut > 0 ? all.Substring(cut + 1) : "", new UTF8Encoding(false));
+                        }
+                    }
+                    catch { }
+                    string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + AppInfo.Version + "  " + area + ": " +
+                        (text ?? "").Replace("\r\n", " | ").Replace('\n', ' ').Replace('\r', ' ');
+                    File.AppendAllText(path, line + Environment.NewLine, new UTF8Encoding(false));
+                }
+            }
+            catch { }
+        }
+
+        public static void Write(string area, Exception ex)
+        {
+            if (ex == null) return;
+            Write(area, ex.GetType().Name + ": " + ex.Message + " | " + (ex.StackTrace ?? "").Trim());
+        }
+    }
+}
