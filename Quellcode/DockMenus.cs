@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace DockPilot
@@ -23,6 +24,16 @@ namespace DockPilot
         public readonly MenuTheme Colors;
         public readonly float Scale;
         private readonly ModernRenderer _renderer;
+        // Schrift (pt) und Symbolgröße (px bei 100 %) – Standard wie alle Menüs; Ordnermenüs nach Einstellung (FolderSize)
+        private float _fontPt = 9.5f;
+        private int _iconPx = 16;
+        // weitere Einstellungen der Ordnermenüs (Einstellungen › Ordnermenüs bzw. Eigenschaften des Ordnermenüs)
+        private int _rowPad = 8;                 // Luft je Zeile (kompakt 4, normal 8, luftig 14) × Skalierung
+        private int _maxWidth;                   // Höchstbreite in px bei 100 %, 0 = unbegrenzt
+        private int _maxItems;                   // höchstens so viele Zeilen, danach Bildlauf; 0 = bis zum Bildschirmrand
+        private bool _showExt = true, _showHidden, _openTop, _hideEmpty;
+        private Regex _exclude;                  // Ausschlussmuster des Ordnermenüs, null = keine
+        private int _subDelay = -1;              // Untermenüs öffnen nach … ms, -1 = Windows-Einstellung
 
         public MenuBuilder() : this(null) { }
 
@@ -37,18 +48,83 @@ namespace DockPilot
             if (existing == null) Menu.Opened += delegate { MenuHelper.RoundCorners(Menu); };
         }
 
+        /// <summary>
+        /// Ordnermenüs: Schrift- und Symbolgröße nach Einstellung (Allgemein › Ordnermenüs). Tray- und Kontextmenüs
+        /// bleiben bei 9,5 pt und 16 px (einheitlich in allen Programmen). Vor dem Füllen aufrufen.
+        /// </summary>
+        public void FolderSize(Settings s)
+        {
+            if (s == null) return;
+            _fontPt = Math.Max(8f, Math.Min(16f, s.MenuFontSize / 10f));
+            _iconPx = Math.Max(16, Math.Min(48, s.MenuIconSize));
+            _rowPad = s.MenuRowSpacing <= 0 ? 4 : s.MenuRowSpacing >= 2 ? 14 : 8;
+            _maxWidth = s.MenuMaxWidth;
+            _maxItems = s.MenuMaxItems;
+            _showExt = s.MenuExtensions;
+            _showHidden = s.MenuHidden;
+            _openTop = s.MenuOpenEntry;
+            _subDelay = Math.Max(0, Math.Min(2000, s.MenuSubDelay));
+            Style(Menu);
+            // Verzögerung der Untermenüs: gilt für alle Menüs des Programms, deshalb nur solange dieses Menü offen ist
+            Menu.Opened += delegate { SubmenuDelay(_subDelay); };
+            Menu.Closed += delegate { SubmenuDelay(-1); };
+        }
+
+        /// <summary>Einstellungen des einzelnen Ordnermenüs: Ausschlussmuster und leere Unterordner ausblenden.</summary>
+        public void FolderOptions(DockItem item)
+        {
+            if (item == null) return;
+            _hideEmpty = item.HideEmpty;
+            _exclude = ExcludePattern(item.Exclude);
+        }
+
+        /// <summary>„*.tmp; *.bak; Thumbs.db“ → Regex für Dateinamen (ohne Groß-/Kleinschreibung), null = keine Muster.</summary>
+        public static Regex ExcludePattern(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            List<string> parts = new List<string>();
+            foreach (string raw in text.Split(';', '|'))
+            {
+                string p = raw.Trim();
+                if (p.Length == 0) continue;
+                parts.Add("^" + Regex.Escape(p).Replace(@"\*", ".*").Replace(@"\?", ".") + "$");
+            }
+            if (parts.Count == 0) return null;
+            return new Regex(string.Join("|", parts.ToArray()), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        // Verzögerung beim Aufklappen von Untermenüs: WinForms nimmt die Windows-Einstellung (MenuShowDelay) und bietet
+        // dafür nichts Öffentliches. Fehlt das interne Feld in einer .NET-Version, bleibt es still bei der Windows-Einstellung.
+        private static void SubmenuDelay(int ms)
+        {
+            try
+            {
+                PropertyInfo timerProp = typeof(ToolStripMenuItem).GetProperty("MenuTimer", BindingFlags.NonPublic | BindingFlags.Static);
+                object timer = timerProp != null ? timerProp.GetValue(null, null) : null;
+                if (timer == null) return;
+                PropertyInfo interval = timer.GetType().GetProperty("Interval", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (interval == null || !interval.CanWrite) return;
+                interval.SetValue(timer, Math.Max(1, ms < 0 ? SystemInformation.MenuShowDelay : ms), null);
+            }
+            catch { }
+        }
+
         /// <summary>Gleiche Darstellung für Haupt- und Untermenüs.</summary>
         public void Style(ToolStripDropDownMenu dd)
         {
             dd.Renderer = _renderer;
-            dd.Font = new Font("Segoe UI", 9.5f);
+            dd.Font = new Font("Segoe UI", _fontPt);
             dd.ShowCheckMargin = false;
             dd.ShowImageMargin = true;
             dd.ShowItemToolTips = false;
             // Ab Windows 11 zeichnet das System selbst einen Schatten – den alten WinForms-Schatten abschalten
             if (Environment.OSVersion.Version.Build >= 22000) dd.DropShadowEnabled = false;
-            dd.ImageScalingSize = new Size(IconWidth, (int)(16 * Scale));
+            dd.ImageScalingSize = new Size(IconWidth, IconPx);
             dd.Padding = new Padding(0, (int)(4 * Scale), 0, (int)(4 * Scale));
+            // Ordnermenüs: höchstens so viele Zeilen, danach Bildlauf (oben 4 + 2, unten 4 + 6 Luft, Rahmen 2)
+            if (_maxItems > 0) dd.MaximumSize = new Size(0, RowHeight * _maxItems + (int)(16 * Scale) + 2);
+            // gekürzte Namen zeigen den ganzen Namen als Tooltip
+            if (_maxWidth > 0) dd.ShowItemToolTips = true;
             // Mausrad in langen Menüs (WinForms scrollt sonst nur über die Pfeile oben und unten)
             dd.MouseWheel -= OnMenuWheel;
             dd.MouseWheel += OnMenuWheel;
@@ -125,21 +201,35 @@ namespace DockPilot
             return dd.Items[dd.Items.Count - 1].Bounds.Bottom > view.Bottom;
         }
 
+        /// <summary>Breite der Symbolspalte: 36 bei 16-px-Symbolen, mit größeren Symbolen entsprechend breiter.</summary>
         public int IconWidth
         {
-            get { return (int)(36 * Scale); }
+            get { return (int)((36 + _iconPx - 16) * Scale); }
         }
 
-        /// <summary>Einheitliche Zeilenhöhe wie im Monitor Dimmer: Schrifthöhe + je 4 Einheiten oben und unten.</summary>
+        /// <summary>Symbolgröße in Pixeln (skaliert).</summary>
+        private int IconPx
+        {
+            get { return (int)Math.Round(_iconPx * Scale); }
+        }
+
+        /// <summary>
+        /// Einheitliche Zeilenhöhe wie im Monitor Dimmer: Schrifthöhe + je 4 Einheiten oben und unten; bei großen
+        /// Symbolen (Ordnermenüs) mindestens Symbol + je 4 Einheiten.
+        /// </summary>
         public int RowHeight
         {
-            get { return TextRenderer.MeasureText("Ag", Menu.Font).Height + (int)(8 * Scale); }
+            get
+            {
+                int text = TextRenderer.MeasureText("Ag", Menu.Font).Height + (int)(_rowPad * Scale);
+                return Math.Max(text, IconPx + (int)(_rowPad * Scale));
+            }
         }
 
         public GlyphMenuItem Item(string text, char glyph, MethodInvoker action)
         {
             GlyphMenuItem item = Base(text, action);
-            if (glyph != '\0') item.Glyph = MenuHelper.Glyph(glyph, Colors.Text, (int)(16 * Scale));
+            if (glyph != '\0') item.Glyph = MenuHelper.Glyph(glyph, Colors.Text, IconPx);
             return item;
         }
 
@@ -154,12 +244,12 @@ namespace DockPilot
         private GlyphMenuItem Base(string text, MethodInvoker action)
         {
             GlyphMenuItem item = new GlyphMenuItem(text);
-            int pad = (int)(5 * Scale);
+            int pad = (int)(_rowPad * 5 / 8f * Scale);
             item.Padding = new Padding(0, pad, (int)(8 * Scale), pad);
             item.ShowShortcutKeys = true;
             item.FixedHeight = RowHeight;
             // Unsichtbarer Platzhalter: reserviert die volle Breite der Symbolspalte
-            item.Image = MenuHelper.Blank(IconWidth, (int)(16 * Scale));
+            item.Image = MenuHelper.Blank(IconWidth, IconPx);
             item.ImageScaling = ToolStripItemImageScaling.None;
             if (action != null) item.Click += delegate { action(); };
             return item;
@@ -224,8 +314,8 @@ namespace DockPilot
         /// </summary>
         public void FillFolder(ToolStripItemCollection items, string folder, bool foldersFirst, bool filesOnly, bool openEntry)
         {
-            // Dateisymbole in Menügröße (16 px wie die Symbole der übrigen Menüs) – größere füllen die Zeile bis an den Rand
-            int iconSize = (int)Math.Round(16 * Scale);
+            // Dateisymbole in Menügröße (Standard 16 px wie die Symbole der übrigen Menüs, einstellbar über FolderSize)
+            int iconSize = IconPx;
             List<KeyValuePair<GlyphMenuItem, string>> pending = new List<KeyValuePair<GlyphMenuItem, string>>();
             // etwas mehr Luft über dem ersten Eintrag (passend zur Leerzeile unten)
             if (items.Count == 0) items.Add(new MenuSpacer((int)Math.Round(2 * Scale)));
@@ -235,9 +325,9 @@ namespace DockPilot
             {
                 if (!filesOnly)
                     foreach (string d in Directory.GetDirectories(folder))
-                        if (Visible(d)) dirs.Add(d);
+                        if (Shown(d, false) && (!_hideEmpty || HasEntries(d, filesOnly))) dirs.Add(d);
                 foreach (string f in Directory.GetFiles(folder))
-                    if (Visible(f) && !HiddenNames.Contains(Path.GetFileName(f))) files.Add(f);
+                    if (Shown(f, true)) files.Add(f);
             }
             catch (Exception ex)
             {
@@ -249,12 +339,21 @@ namespace DockPilot
             }
 
             List<KeyValuePair<string, bool>> all = SortEntries(folder, dirs, files, foldersFirst);
+            // „Ordner öffnen“ oben (Einstellung), in jedem Untermenü für seinen Ordner
+            if (_openTop && !openEntry)
+            {
+                items.Add(Item("Ordner öffnen", MenuHelper.Folder, delegate { Shell.Open(folder, "", ""); }));
+                items.Add(new ToolStripSeparator());
+            }
 
             foreach (KeyValuePair<string, bool> e in all)
             {
                 string path = e.Key;
                 // "&" wäre sonst ein Tastenkürzel-Zeichen und verschwindet ("Command & Conquer")
-                GlyphMenuItem item = ImageItem(DisplayName(path).Replace("&", "&&"), CachedIcon(path, iconSize), null);
+                string label = EntryName(path, e.Value);
+                string shown = Shorten(label);
+                GlyphMenuItem item = ImageItem(shown.Replace("&", "&&"), CachedIcon(path, iconSize), null);
+                if (shown != label) item.ToolTipText = label;
                 item.Tag = path; // für das Verschieben per Ziehen
                 if (item.Glyph == null) pending.Add(new KeyValuePair<GlyphMenuItem, string>(item, path));
                 if (e.Value)
@@ -775,6 +874,52 @@ namespace DockPilot
                 }
                 it.Dispose();
             }
+        }
+
+        /// <summary>Anzeigen? Versteckte und Systemdateien nur nach Einstellung, dazu die Ausschlussmuster.</summary>
+        private bool Shown(string path, bool file)
+        {
+            string name = Path.GetFileName(path.TrimEnd('\\'));
+            if (_exclude != null && _exclude.IsMatch(name)) return false;
+            if (_showHidden) return true;
+            return Visible(path) && (!file || !HiddenNames.Contains(name));
+        }
+
+        /// <summary>Hat der Unterordner etwas anzuzeigen (nach denselben Regeln, nur eine Ebene tief)?</summary>
+        private bool HasEntries(string dir, bool filesOnly)
+        {
+            try
+            {
+                foreach (string f in Directory.EnumerateFiles(dir)) if (Shown(f, true)) return true;
+                if (!filesOnly) foreach (string d in Directory.EnumerateDirectories(dir)) if (Shown(d, false)) return true;
+                return false;
+            }
+            catch { return true; } // nicht lesbar: lieber zeigen (das Untermenü meldet den Fehler)
+        }
+
+        /// <summary>Angezeigter Name: Verknüpfungen ohne Endung, andere Dateien nach Einstellung mit oder ohne.</summary>
+        private string EntryName(string path, bool isDir)
+        {
+            string name = DisplayName(path);
+            if (isDir || _showExt || name != Path.GetFileName(path.TrimEnd('\\'))) return name;
+            string bare = Path.GetFileNameWithoutExtension(name);
+            return bare.Length > 0 ? bare : name; // „.gitignore“ bliebe sonst leer
+        }
+
+        /// <summary>Namen bei Höchstbreite mit „…“ kürzen (Symbolspalte, Abstände und Pfeil für Untermenüs abgezogen).</summary>
+        private string Shorten(string text)
+        {
+            if (_maxWidth <= 0) return text;
+            int room = (int)(_maxWidth * Scale) - IconWidth - (int)((MenuHelper.TextGap + 8 + 28) * Scale);
+            Font f = Menu.Font;
+            if (room <= 0 || TextRenderer.MeasureText(text, f).Width <= room) return text;
+            int lo = 1, hi = text.Length - 1;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (TextRenderer.MeasureText(text.Substring(0, mid).TrimEnd() + "…", f).Width <= room) lo = mid; else hi = mid - 1;
+            }
+            return text.Substring(0, lo).TrimEnd() + "…";
         }
 
         private static bool Visible(string path)

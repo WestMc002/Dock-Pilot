@@ -259,6 +259,14 @@ namespace DockPilot
         public int Minimum { get { return _min; } set { _min = value; Value = _value; } }
         public int Maximum { get { return _max; } set { _max = value; Value = _value; } }
         public string Suffix { get; set; }
+        /// <summary>Anzeige geteilt durch diesen Wert (10: 95 → „9,5“), z. B. für Schriftgrößen in Zehntel-Punkt.</summary>
+        public int Divisor = 1;
+        /// <summary>
+        /// Wert 0 als „aus“ (z. B. „unbegrenzt“): zwischen 0 und OffMin gibt es nichts – ein Schritt aufwärts von 0
+        /// springt auf OffMin, einer abwärts von OffMin auf 0. Null = 0 ist ein gewöhnlicher Wert.
+        /// </summary>
+        public string OffText;
+        public int OffMin;
 
         public int Value
         {
@@ -266,6 +274,7 @@ namespace DockPilot
             set
             {
                 int v = Math.Max(_min, Math.Min(_max, value));
+                if (OffText != null && v > 0 && v < OffMin) v = v > _value ? OffMin : 0;
                 if (v == _value) return;
                 _value = v;
                 Invalidate();
@@ -358,7 +367,10 @@ namespace DockPilot
             DrawButton(g, new RectangleF(3f * sc, 3f * sc, btn - 6f * sc, Height - 6f * sc), false, _hoverPart == -1 && Hover, _value <= _min, p, sc);
             DrawButton(g, new RectangleF(Width - btn + 3f * sc, 3f * sc, btn - 6f * sc, Height - 6f * sc), true, _hoverPart == 1 && Hover, _value >= _max, p, sc);
 
-            string text = _value.ToString() + (string.IsNullOrEmpty(Suffix) ? "" : " " + Suffix);
+            string num = Divisor > 1
+                ? (_value / (double)Divisor).ToString("0.#", System.Globalization.CultureInfo.GetCultureInfo("de-DE"))
+                : _value.ToString();
+            string text = OffText != null && _value == 0 ? OffText : num + (string.IsNullOrEmpty(Suffix) ? "" : " " + Suffix);
             using (Font f = Theme.UiFont(14f * sc, FontStyle.Bold))
             using (SolidBrush b = new SolidBrush(p.Text))
             using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })

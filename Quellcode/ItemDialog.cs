@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -23,7 +24,10 @@ namespace DockPilot
 
         private ChoiceBox _kind, _window, _sort;
         private ToggleSwitch _foldersFirst;
-        private Label _sortHint;
+        private TextField _exclude;
+        private ToggleSwitch _hideEmpty, _hoverOpen;
+        private readonly List<KeyValuePair<Control, int>> _bottom = new List<KeyValuePair<Control, int>>(); // unter den Zeilen der Art: Basis-Y
+        private int _extra = -1; // zusätzliche Höhe für das Ordnermenü (mehr Zeilen)
         private TextField _name, _target, _args, _dir, _folder;
         private ToggleSwitch _admin, _filesOnly;
         private PictureBox _iconBox;
@@ -108,23 +112,31 @@ namespace DockPilot
             Place(browseFolder, x + w - S(32), S(102));
             _sort = Choice(new[] { "Name (A–Z)", "Name (Z–A)", "Neueste zuerst", "Älteste zuerst", "Eigene Reihenfolge" });
             Label ls = Row("Sortierung", _sort, x, S(144), S(220));
+            ToolTip tip = new ModernToolTip();
+            // Hinweis: Reihenfolge im offenen Menü per Ziehen ändern (stellt die Sortierung auf „Eigene Reihenfolge“)
+            tip.SetToolTip(ls, "Einträge lassen sich im offenen Ordnermenü mit der Maus an eine andere Stelle ziehen –\ndie Sortierung wechselt dann auf „Eigene Reihenfolge“ (nicht bei „Einträge sperren“).");
+            _exclude = Field();
+            Label lex = Row("Ausschließen", _exclude, x, S(186), w);
+            tip.SetToolTip(lex, "Diese Dateien und Ordner nicht anzeigen. Mehrere Muster mit „;“ trennen,\n* steht für beliebig viele Zeichen, ? für eines – z. B. „*.tmp; *.bak; Alt*“.");
             _foldersFirst = new ToggleSwitch();
             _foldersFirst.Size = new Size(S(44), S(22));
-            Label lff = Row("Unterordner zuerst", _foldersFirst, x + w - S(44), S(186), S(44));
+            Label lff = Row("Unterordner zuerst", _foldersFirst, x + w - S(44), S(228), S(44));
             _filesOnly = new ToggleSwitch();
             _filesOnly.Size = new Size(S(44), S(22));
-            Label lfo = Row("Nur Dateien (ohne Unterordner)", _filesOnly, x + w - S(44), S(228), S(44));
-            // Hinweis: Reihenfolge im offenen Menü per Ziehen ändern (stellt die Sortierung auf „Eigene Reihenfolge“)
-            _sortHint = MakeLabel("Tipp: Einträge lassen sich im offenen Ordnermenü mit der Maus an eine andere Stelle ziehen – die Sortierung wechselt dann auf „Eigene Reihenfolge“ (nicht bei „Einträge sperren“).", true);
-            _sortHint.AutoSize = false;
-            _sortHint.Bounds = new Rectangle(S(18), S(268), x + w - S(18), S(44));
-            _card.Controls.Add(_sortHint);
-            _menuRows = new Control[] { lf, _folder, browseFolder, ls, _sort, _sortHint, lff, _foldersFirst, lfo, _filesOnly };
+            Label lfo = Row("Nur Dateien (ohne Unterordner)", _filesOnly, x + w - S(44), S(270), S(44));
+            _hideEmpty = new ToggleSwitch();
+            _hideEmpty.Size = new Size(S(44), S(22));
+            Label lhe = Row("Leere Unterordner ausblenden", _hideEmpty, x + w - S(44), S(312), S(44));
+            _hoverOpen = new ToggleSwitch();
+            _hoverOpen.Size = new Size(S(44), S(22));
+            Label lho = Row("Beim Überfahren öffnen", _hoverOpen, x + w - S(44), S(354), S(44));
+            tip.SetToolTip(lho, "Das Ordnermenü öffnet sich schon, wenn die Maus kurz auf dem Symbol verweilt – ohne Klick.");
+            _menuRows = new Control[] { lf, _folder, browseFolder, ls, _sort, lex, _exclude, lff, _foldersFirst, lfo, _filesOnly, lhe, _hideEmpty, lho, _hoverOpen };
 
             // eigenes Tastenkürzel (für beide Arten)
             _hotkey = new ComboHotkeyBox();
             _hotkey.Size = new Size(S(200), S(32));
-            Row("Tastenkürzel", _hotkey, x, S(316), S(200));
+            Label lhk = Row("Tastenkürzel", _hotkey, x, S(316), S(200));
             Label hotkeyHint = MakeLabel("gilt systemweit", true); // kurz: daneben ist nur wenig Platz
             hotkeyHint.Location = new Point(x + S(212), S(316) + (S(32) - hotkeyHint.PreferredHeight) / 2);
             _card.Controls.Add(hotkeyHint);
@@ -150,6 +162,9 @@ namespace DockPilot
             Label hint = MakeLabel("Standard = Symbol des Ziels", true);
             hint.Location = new Point(x + S(80), S(404));
             _card.Controls.Add(hint);
+            // Tastenkürzel und Symbol rücken beim Ordnermenü (mehr Zeilen) nach unten
+            foreach (Control c in new Control[] { lhk, _hotkey, hotkeyHint, _iconBox, li, change, reset, hint })
+                _bottom.Add(new KeyValuePair<Control, int>(c, c.Top));
 
             _kind.SelectionChanged += delegate { UpdateKind(); UpdatePreview(); };
             _target.Leave += delegate { UpdatePreview(); };
@@ -246,6 +261,9 @@ namespace DockPilot
             _sort.SelectedIndex = _item.Sort;
             _foldersFirst.Checked = _item.FoldersFirst;
             _filesOnly.Checked = _item.FilesOnly;
+            _exclude.Text = _item.Exclude;
+            _hideEmpty.Checked = _item.HideEmpty;
+            _hoverOpen.Checked = _item.OpenOnHover;
             _hotkey.SetHotkey(_item.HotkeyModifiers, _item.HotkeyKey);
             UpdateKind();
             UpdatePreview();
@@ -256,6 +274,20 @@ namespace DockPilot
             bool menu = _kind.SelectedIndex == 1;
             foreach (Control c in _programRows) c.Visible = !menu;
             foreach (Control c in _menuRows) c.Visible = menu;
+            // Ordnermenü: drei Zeilen mehr als Platz unter den Programmzeilen – Tastenkürzel, Symbol, Karte, Knöpfe
+            // und Fenster rücken um diese Höhe (feste Fenstergröße dafür kurz lösen)
+            int extra = menu ? S(80) : 0;
+            if (extra == _extra) return;
+            int d = extra - Math.Max(0, _extra);
+            _extra = extra;
+            foreach (KeyValuePair<Control, int> b in _bottom) b.Key.Top = b.Value + extra;
+            _card.Height = S(464) + extra;
+            foreach (Control c in new Control[] { _btnSave, _btnCancel, _error }) c.Top += d;
+            Size min = MinimumSize, max = MaximumSize;
+            MinimumSize = Size.Empty;
+            MaximumSize = Size.Empty;
+            ClientSize = new Size(ClientSize.Width, ClientSize.Height + d);
+            if (min != Size.Empty) { MinimumSize = Size; MaximumSize = Size; }
         }
 
         private DockItem Current()
@@ -272,6 +304,9 @@ namespace DockPilot
             it.FoldersFirst = _foldersFirst.Checked;
             it.Sort = Math.Max(0, _sort.SelectedIndex);
             it.FilesOnly = _filesOnly.Checked;
+            it.Exclude = _exclude.Text.Trim();
+            it.HideEmpty = _hideEmpty.Checked;
+            it.OpenOnHover = _hoverOpen.Checked;
             it.Icon = _icon;
             it.HotkeyModifiers = _hotkey.Key > 0 ? _hotkey.Modifiers : 0;
             it.HotkeyKey = _hotkey.Key;

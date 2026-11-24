@@ -110,6 +110,12 @@ Verknüpfungen einfach in den Ordner legen – sie erscheinen beim nächsten Öf
 Ein offenes Ordnermenü klappt zu, wenn man woanders hinklickt, Esc drückt oder
 die Maus Menü und Dock eine Sekunde lang verlässt. Fährt man im Dock auf ein
 anderes Ordnermenü, wechselt es direkt dorthin.
+Darstellung und Inhalt der Ordnermenüs lassen sich unter Einstellungen >
+Ordnermenüs einstellen (gilt für alle Ordnermenüs; Tray- und Rechtsklick-Menü
+bleiben in der Standardgröße).
+Je Ordnermenü (Rechtsklick > Eigenschaften): Muster zum Ausschließen (z. B.
+"*.tmp; *.bak"), leere Unterordner ausblenden und "Beim Überfahren öffnen" -
+dann klappt das Menü schon auf, wenn die Maus kurz auf dem Symbol verweilt.
 Im offenen Menü tippen: Die Auswahl springt zum ersten Eintrag, der so beginnt
 (sonst zu einem, der die Buchstaben enthält). Derselbe Buchstabe noch einmal
 springt zum nächsten Treffer, Enter öffnet ihn.
@@ -166,6 +172,10 @@ Fehlerprotokoll, Sichern und Wiederherstellen sowie Standardwerte.
   zeigt ein kleines Beispiel-Dock Zoom-Effekt und Hervorhebung sofort.
 - Beschriftung: ein/aus, Schriftart (Standard: Schrift von Windows), Schriftgröße, fett, Farbe (weiß, schwarz, wie
   Windows, Akzentfarbe oder eigene Farbe), Stärke und Größe des Schattens
+- Ordnermenüs: Schriftgröße (Standard 9,5 pt), Symbolgröße (Standard 16 px),
+  Zeilenabstand, Höchstbreite (längere Namen mit "…"), höchstens so viele
+  Einträge (danach blättern), Dateiendungen, versteckte Dateien, "Ordner öffnen"
+  oben im Menü, Verzögerung für Untermenüs.
 - Verhalten: automatisch ausblenden (mit Verzögerung), bei Vollbild ausblenden
   (Spiele, Videos), laufende Programme nach vorne holen, Einträge sperren,
   Animationen (aus, schnell, normal, langsam), Tastenkürzel zum Ein- und

@@ -513,6 +513,7 @@ namespace DockPilot
             int hover = inside && !_dragging ? HitIndex(along, across) : -1;
             if (hover != _hover) { _hover = hover; _dirty = true; }
             PreviewTick(now, hover, overPreview);
+            HoverOpenTick(now, hover);
             if (inside != _hot) { _hot = inside; _dirty = true; }
 
             // --- laufende Programme

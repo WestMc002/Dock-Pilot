@@ -104,6 +104,15 @@ namespace DockPilot
         public bool KeepOldTask = false;          // alte Aufgabe „Dock Pilot“ (Autostart mit Administratorrechten) behalten, nicht mehr fragen
         public string LastUpdateCheck = "";       // Zeitpunkt der letzten erfolgreichen Prüfung (UTC, ISO 8601)
         public bool NavPinned = true;             // Einstellungsfenster: Navigation angepinnt (wird sofort gespeichert)
+        public int MenuFontSize = 95;             // Ordnermenüs: Schriftgröße in Zehntel-Punkt (95 = 9,5 pt wie alle Menüs)
+        public int MenuIconSize = 16;             // Ordnermenüs: Symbolgröße in Pixeln bei 100 % (16 = wie alle Menüs)
+        public int MenuRowSpacing = 1;            // Ordnermenüs: Zeilenabstand 0 = kompakt, 1 = normal, 2 = luftig
+        public int MenuMaxWidth = 0;              // Ordnermenüs: Höchstbreite in Pixeln bei 100 % (0 = unbegrenzt), längere Namen mit „…“
+        public int MenuMaxItems = 0;              // Ordnermenüs: höchstens so viele Einträge, danach Bildlauf (0 = bis zum Bildschirmrand)
+        public bool MenuExtensions = true;        // Ordnermenüs: Dateiendungen anzeigen (Verknüpfungen immer ohne)
+        public bool MenuHidden = false;           // Ordnermenüs: versteckte Dateien und Systemdateien anzeigen
+        public bool MenuOpenEntry = false;        // Ordnermenüs: „Ordner öffnen“ oben im Menü
+        public int MenuSubDelay = 400;            // Ordnermenüs: Untermenüs öffnen nach … ms (Windows-Standard 400)
 
         public Settings Clone()
         {
@@ -125,6 +134,8 @@ namespace DockPilot
             AnimSpeed = o.AnimSpeed; AlwaysOnTop = o.AlwaysOnTop; RaiseOnHover = o.RaiseOnHover;
             HotkeyModifiers = o.HotkeyModifiers; HotkeyKey = o.HotkeyKey;
             FirstRun = o.FirstRun; UpdateCheck = o.UpdateCheck; AutoInstall = o.AutoInstall; KeepOldTask = o.KeepOldTask; LastUpdateCheck = o.LastUpdateCheck; NavPinned = o.NavPinned;
+            MenuFontSize = o.MenuFontSize; MenuIconSize = o.MenuIconSize; MenuRowSpacing = o.MenuRowSpacing; MenuMaxWidth = o.MenuMaxWidth;
+            MenuMaxItems = o.MenuMaxItems; MenuExtensions = o.MenuExtensions; MenuHidden = o.MenuHidden; MenuOpenEntry = o.MenuOpenEntry; MenuSubDelay = o.MenuSubDelay;
             for (int i = 0; i < ExtraDocks; i++) Extra[i] = o.Extra[i].Clone();
             Profile = o.Profile;
         }
@@ -260,6 +271,17 @@ namespace DockPilot
             s.FirstRun = Ini.GetBool(v, "ErsterStart", s.FirstRun);
             s.UpdateCheck = Ini.GetBool(v, "UpdatesPruefen", s.UpdateCheck);
             s.AutoInstall = Ini.GetBool(v, "AutomatischAktualisieren", s.AutoInstall);
+            s.MenuFontSize = Ini.GetInt(v, "OrdnermenueSchrift", s.MenuFontSize, 80, 160);
+            s.MenuIconSize = Ini.GetInt(v, "OrdnermenueSymbol", s.MenuIconSize, 16, 48);
+            s.MenuRowSpacing = Ini.GetInt(v, "OrdnermenueZeilenabstand", s.MenuRowSpacing, 0, 2);
+            s.MenuMaxWidth = Ini.GetInt(v, "OrdnermenueBreite", s.MenuMaxWidth, 0, 1200);
+            if (s.MenuMaxWidth > 0 && s.MenuMaxWidth < 200) s.MenuMaxWidth = 200;
+            s.MenuMaxItems = Ini.GetInt(v, "OrdnermenueEintraege", s.MenuMaxItems, 0, 100);
+            if (s.MenuMaxItems > 0 && s.MenuMaxItems < 5) s.MenuMaxItems = 5;
+            s.MenuExtensions = Ini.GetBool(v, "OrdnermenueEndungen", s.MenuExtensions);
+            s.MenuHidden = Ini.GetBool(v, "OrdnermenueVersteckte", s.MenuHidden);
+            s.MenuOpenEntry = Ini.GetBool(v, "OrdnermenueOrdnerOeffnen", s.MenuOpenEntry);
+            s.MenuSubDelay = Ini.GetInt(v, "OrdnermenueUntermenueNach", s.MenuSubDelay, 0, 2000);
             s.KeepOldTask = Ini.GetBool(v, "AlteAufgabeBehalten", s.KeepOldTask);
             s.NavPinned = Ini.GetBool(v, "NavigationAngepinnt", s.NavPinned);
             s.Profile = CleanProfile(Ini.Get(v, "Profil", ""));
@@ -376,6 +398,19 @@ namespace DockPilot
             sb.AppendLine("NavigationAngepinnt=" + B(NavPinned));
             sb.AppendLine("; aktives Profil (Einträge aller Docks), leer = Standard");
             sb.AppendLine("Profil=" + Profile);
+            sb.AppendLine("[Ordnermenues]");
+            sb.AppendLine("; Schriftgroesse in Zehntel-Punkt (95 = 9,5 pt), Symbolgroesse in Pixeln bei 100 % (16 - 48)");
+            sb.AppendLine("OrdnermenueSchrift=" + MenuFontSize);
+            sb.AppendLine("OrdnermenueSymbol=" + MenuIconSize);
+            sb.AppendLine("; Zeilenabstand 0 = kompakt, 1 = normal, 2 = luftig; Breite in Pixeln und Eintraege: 0 = unbegrenzt");
+            sb.AppendLine("OrdnermenueZeilenabstand=" + MenuRowSpacing);
+            sb.AppendLine("OrdnermenueBreite=" + MenuMaxWidth);
+            sb.AppendLine("OrdnermenueEintraege=" + MenuMaxItems);
+            sb.AppendLine("OrdnermenueEndungen=" + B(MenuExtensions));
+            sb.AppendLine("OrdnermenueVersteckte=" + B(MenuHidden));
+            sb.AppendLine("OrdnermenueOrdnerOeffnen=" + B(MenuOpenEntry));
+            sb.AppendLine("; Untermenues oeffnen nach ... ms (Windows-Standard 400)");
+            sb.AppendLine("OrdnermenueUntermenueNach=" + MenuSubDelay);
             sb.AppendLine("[WeitereDocks]");
             sb.AppendLine("; Dock 2 und 3: eigene Einträge (Dock2.ini, Dock3.ini), eigene Position und Symbolgröße");
             for (int i = 0; i < ExtraDocks; i++)
@@ -414,6 +449,9 @@ namespace DockPilot
         public bool FilesOnly = false;    // nur Ordnermenü: keine Unterordner anzeigen
         public int Sort = 0;              // nur Ordnermenü: 0 Name A–Z, 1 Name Z–A, 2 neueste zuerst, 3 älteste zuerst, 4 eigene Reihenfolge
         public string Order = "";         // nur Ordnermenü, eigene Reihenfolge: Pfade relativ zum Ordner, getrennt mit „|“
+        public string Exclude = "";       // nur Ordnermenü: nicht anzeigen, Muster getrennt mit „;“ (z. B. „*.tmp; *.bak“)
+        public bool HideEmpty = false;    // nur Ordnermenü: leere Unterordner ausblenden
+        public bool OpenOnHover = false;  // nur Ordnermenü: schon beim Überfahren im Dock öffnen (statt per Klick)
         public int HotkeyModifiers = 0;   // eigenes Tastenkürzel: startet den Eintrag bzw. holt sein Fenster nach vorne (wie ein Klick)
         public int HotkeyKey = 0;         // 0 = keins
         public bool Temp = false;         // laufendes Programm ohne eigenen Eintrag: nur vorübergehend im Dock, wird nicht gespeichert
@@ -514,6 +552,9 @@ namespace DockPilot
                 it.FilesOnly = Ini.GetBool(v, "NurDateien", false);
                 it.Sort = Ini.GetInt(v, "Sortierung", 0, 0, 4);
                 it.Order = Ini.Get(v, "Reihenfolge", "");
+                it.Exclude = Ini.Get(v, "Ausschliessen", "");
+                it.HideEmpty = Ini.GetBool(v, "LeereAusblenden", false);
+                it.OpenOnHover = Ini.GetBool(v, "BeimUeberfahren", false);
                 it.HotkeyModifiers = Ini.GetInt(v, "KuerzelZusatz", 0, 0, 15);
                 it.HotkeyKey = Ini.GetInt(v, "KuerzelTaste", 0, 0, 255);
                 list.Add(it);
@@ -559,6 +600,9 @@ namespace DockPilot
                     sb.AppendLine("NurDateien=" + (it.FilesOnly ? "1" : "0"));
                     sb.AppendLine("Sortierung=" + it.Sort);
                     if (it.Order.Length > 0) sb.AppendLine("Reihenfolge=" + Ini.Clean(it.Order));
+                    if (it.Exclude.Length > 0) sb.AppendLine("Ausschliessen=" + Ini.Clean(it.Exclude));
+                    if (it.HideEmpty) sb.AppendLine("LeereAusblenden=1");
+                    if (it.OpenOnHover) sb.AppendLine("BeimUeberfahren=1");
                 }
                 else
                 {

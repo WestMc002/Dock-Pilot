@@ -237,6 +237,26 @@ namespace DockPilot
             ShowAt(mb.Menu, s);
         }
 
+        // Ordnermenü beim Überfahren öffnen (Eigenschaft „Beim Überfahren öffnen“): nach kurzem Verweilen, nicht im
+        // Vorbeiflug; nach dem Schließen erst wieder, wenn die Maus das Symbol einmal verlassen hat
+        private int _hoverOpenIndex = -1, _hoverOpenDone = -1;
+        private DateTime _hoverOpenSince;
+
+        private void HoverOpenTick(DateTime now, int hover)
+        {
+            if (hover != _hoverOpenDone) _hoverOpenDone = -1;
+            bool candidate = hover >= 0 && hover < _slots.Count && !_dragging && _openMenu == null && !_menuOpen &&
+                             (MouseButtons & (MouseButtons.Left | MouseButtons.Right)) == 0 &&
+                             !_slots[hover].Item.IsSeparator && _slots[hover].Item.Kind == ItemKind.Ordnermenue &&
+                             _slots[hover].Item.OpenOnHover && hover != _hoverOpenDone;
+            if (!candidate) { _hoverOpenIndex = -1; return; }
+            if (hover != _hoverOpenIndex) { _hoverOpenIndex = hover; _hoverOpenSince = now; return; }
+            if ((now - _hoverOpenSince).TotalMilliseconds < 350) return;
+            _hoverOpenIndex = -1;
+            _hoverOpenDone = hover;
+            ShowFolderMenu(hover);
+        }
+
         private void ShowFolderMenu(int index)
         {
             Slot s = _slots[index];
@@ -262,6 +282,8 @@ namespace DockPilot
                 _undoFiles = files;
                 _undoItem = null;
             };
+            mb.FolderSize(_s);        // Schrift, Symbole, Zeilenabstand, Breite, Höhe … nach Einstellung
+            mb.FolderOptions(item);   // Ausschlussmuster und leere Unterordner dieses Ordnermenüs
             mb.FillFolder(mb.Menu.Items, folder, item.FoldersFirst, item.FilesOnly, false); // "Ordner öffnen" nur im Kontextmenü
             mb.EnableReorder(mb.Menu, folder);
             mb.End();

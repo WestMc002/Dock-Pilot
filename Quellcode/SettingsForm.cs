@@ -53,6 +53,30 @@ namespace DockPilot
         private int _extraShown = -1;
         private bool _extraLoading;
         private ChoiceBox _highlight;
+        private Stepper _menuFont, _menuIcon;     // Ordnermenüs: Schrift (Zehntel-Punkt) und Symbolgröße (px)
+        private Stepper _menuWidth, _menuItems, _menuDelay;
+        private ChoiceBox _menuRows;
+        private double _rowF = 1.0;               // Streckung der Zeilenabstände (1 = 42er Raster, bis 47/42)
+
+        /// <summary>
+        /// Zeilenabstand 47 statt 42 (Einstellungen bekommen mehr Luft), aber nur so weit, wie das Fenster samt Titelleiste
+        /// auf den Bildschirm passt – z. B. bei 1080p und 150 % bleibt es beim alten Raster.
+        /// </summary>
+        private double RowFactor()
+        {
+            try
+            {
+                int avail = Screen.FromPoint(Cursor.Position).WorkingArea.Height;
+                int frame = SystemInformation.CaptionHeight + 2 * SystemInformation.FrameBorderSize.Height + S(16);
+                int baseH = S(234) + S(432);                    // Fenster mit dem alten Raster
+                int room = avail - frame - baseH;               // Platz für mehr Luft
+                int want = S(45);                               // 47er Raster: Seite (378 Einheiten ab 54) wird 45 Einheiten höher
+                if (room <= 0) return 1.0;
+                return 1.0 + Math.Min(want, room) / (double)want * (5.0 / 42.0);
+            }
+            catch { return 1.0; }
+        }
+        private ToggleSwitch _menuExt, _menuHidden, _menuOpenTop;
         private Stepper _strength;
         private EffectPreview _effectPreview;
         /// <summary>Live-Vorschau: bekommt die noch nicht gespeicherten Einstellungen (null = wieder die gespeicherten). Vom Tray gesetzt.</summary>
@@ -101,7 +125,9 @@ namespace DockPilot
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
             _navSpace = settings.NavPinned ? S(NavFull) : S(NavCompact);
-            ClientSize = new Size(_navSpace + S(28) + S(ContentW) + S(28), S(660));
+            _rowF = RowFactor();
+            // Höhe: Kopf, Seite (höchste Seite RY(432)) und Knopf-/Fußbereich wie bisher (660 bei 426 hoher Seite)
+            ClientSize = new Size(_navSpace + S(28) + S(ContentW) + S(28), S(234) + RY(432));
             Font = Theme.UiFont(13.5f * _sc, FontStyle.Regular);
             KeyPreview = true;
             DoubleBuffered = true;
@@ -306,6 +332,15 @@ namespace DockPilot
             _activate.Checked = _edit.ActivateRunning;
             _locked.Checked = _edit.Locked;
             _anim.SelectedIndex = _edit.Animate ? 1 + Math.Max(0, Math.Min(2, _edit.AnimSpeed)) : 0;
+            _menuFont.Value = _edit.MenuFontSize;
+            _menuIcon.Value = _edit.MenuIconSize;
+            _menuRows.SelectedIndex = Math.Max(0, Math.Min(2, _edit.MenuRowSpacing));
+            _menuWidth.Value = _edit.MenuMaxWidth;
+            _menuItems.Value = _edit.MenuMaxItems;
+            _menuExt.Checked = _edit.MenuExtensions;
+            _menuHidden.Checked = _edit.MenuHidden;
+            _menuOpenTop.Checked = _edit.MenuOpenEntry;
+            _menuDelay.Value = _edit.MenuSubDelay;
             _hotkey.SetHotkey(_edit.HotkeyModifiers, _edit.HotkeyKey);
             if (includeAutostart)
             {
@@ -458,6 +493,15 @@ namespace DockPilot
             _edit.Locked = _locked.Checked;
             _edit.Animate = _anim.SelectedIndex > 0;
             if (_anim.SelectedIndex > 0) _edit.AnimSpeed = _anim.SelectedIndex - 1;
+            _edit.MenuFontSize = _menuFont.Value;
+            _edit.MenuIconSize = _menuIcon.Value;
+            _edit.MenuRowSpacing = Math.Max(0, _menuRows.SelectedIndex);
+            _edit.MenuMaxWidth = _menuWidth.Value;
+            _edit.MenuMaxItems = _menuItems.Value;
+            _edit.MenuExtensions = _menuExt.Checked;
+            _edit.MenuHidden = _menuHidden.Checked;
+            _edit.MenuOpenEntry = _menuOpenTop.Checked;
+            _edit.MenuSubDelay = _menuDelay.Value;
             _edit.HotkeyModifiers = _hotkey.Modifiers;
             _edit.HotkeyKey = _hotkey.Key;
         }
