@@ -196,8 +196,9 @@ Dock Pilot. Im selben Ordner liegen die aus RocketDock übernommenen Symbole.
 - Extras: Docks (aktives Profil) und Einstellungen in eine Datei sichern (*.dockpilot) und
   wiederherstellen, z. B. für einen zweiten PC. Vor dem Wiederherstellen zeigt
   Dock Pilot alle Einträge der Sicherung mit Ziel und Parametern. Einträge mit
-  "Als Administrator", Tastenkürzel oder Netzwerkpfad (\\Server\... oder ein
-  verbundenes Netzlaufwerk wie Z:) sind hervorgehoben; all das wird nur
+  "Als Administrator", Tastenkürzel oder Netzwerkpfad (\\Server\..., ein
+  verbundenes Netzlaufwerk wie Z: oder ein Ordner mit Umleitung, z. B. eine
+  symbolische Verknüpfung) sind hervorgehoben; all das wird nur
   übernommen, wenn Sie es dort einschalten (Standard: aus, Einträge mit
   Netzwerkpfaden fehlen dann). Die Update-Schalter
   bleiben wie auf diesem PC. Die bisherigen Dateien bleiben als ".vor-import"

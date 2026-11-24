@@ -178,13 +178,45 @@ namespace DockPilot
                 if (uri.IsUnc || (uri.Host.Length > 0 && !uri.IsLoopback)) return true;
                 s = uri.LocalPath;
             }
-            // verbundenes Netzlaufwerk (z. B. Z:): Der Laufwerkstyp lässt sich abfragen, ohne den Server anzusprechen
+            // verbundenes Netzlaufwerk (z. B. Z:): Der Laufwerkstyp lässt sich abfragen, ohne den Server anzusprechen.
+            // Laufwerkstyp unbekannt (Abfrage scheitert, Typ Unknown/NoRootDirectory): wie Netzwerk behandeln, damit ohne
+            // Freigabe kein Zugriff erfolgt
             if (s.Length >= 2 && s[1] == ':' && char.IsLetter(s[0]))
             {
-                try { return new DriveInfo(s.Substring(0, 1)).DriveType == DriveType.Network; }
-                catch { return false; }
+                try
+                {
+                    DriveType type = new DriveInfo(s.Substring(0, 1)).DriveType;
+                    if (type == DriveType.Network || type == DriveType.Unknown || type == DriveType.NoRootDirectory) return true;
+                }
+                catch { return true; }
+                return IsRedirected(s);
             }
             return false;
+        }
+
+        /// <summary>
+        /// Enthält der lokale Pfad eine Umleitung (Reparse Point: symbolische Verknüpfung, Junction, eingebundenes
+        /// Laufwerk …)? Sie könnte auf ein Netzwerkziel zeigen; der Pfad wird dann wie ein Netzwerkpfad behandelt.
+        /// Geprüft werden nur die Attribute der vorhandenen Teile selbst (ohne der Umleitung zu folgen), von der
+        /// Wurzel bis zum ersten fehlenden Teil. Unklare Fälle gelten als umgeleitet.
+        /// </summary>
+        private static bool IsRedirected(string path)
+        {
+            try
+            {
+                string full = Path.GetFullPath(path);
+                string root = Path.GetPathRoot(full);
+                if (string.IsNullOrEmpty(root) || root.Length != 3 || root[1] != ':') return true;
+                string current = root;
+                foreach (string part in full.Substring(root.Length).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    current = Path.Combine(current, part);
+                    if (!File.Exists(current) && !Directory.Exists(current)) return false; // fehlt: dahinter wird nichts geöffnet
+                    if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+                }
+                return false;
+            }
+            catch { return true; }
         }
 
         /// <summary>Verwendet der Eintrag einen Netzwerkpfad (Ziel, Ordner, „Ausführen in“, mit <paramref name="icon"/> auch das Symbol)?</summary>
@@ -258,7 +290,7 @@ namespace DockPilot
                     bool icon = step[1].StartsWith(Settings.IconDirectory, StringComparison.OrdinalIgnoreCase);
                     // Symbole: alter Stand im Hilfsordner; Einstellungen und Einträge als „.vor-import“ daneben
                     step[2] = icon ? Path.Combine(stage, "alt" + (++no)) : step[1] + ".vor-import";
-                    File.Copy(step[1], step[2], true);
+                    Put(step[1], step[2]);
                 }
 
                 // 3. ersetzen
@@ -267,7 +299,7 @@ namespace DockPilot
                 foreach (string[] step in plan)
                 {
                     done.Add(step);
-                    File.Copy(step[0], step[1], true);
+                    Put(step[0], step[1]);
                 }
             }
             catch (Exception ex)
@@ -278,7 +310,7 @@ namespace DockPilot
                 {
                     try
                     {
-                        if (done[i][2] != null) File.Copy(done[i][2], done[i][1], true);
+                        if (done[i][2] != null) Put(done[i][2], done[i][1]);
                         else if (File.Exists(done[i][1])) File.Delete(done[i][1]);
                     }
                     catch { restored = false; }
@@ -310,6 +342,35 @@ namespace DockPilot
             {
                 target.HotkeyModifiers = current.HotkeyModifiers;
                 target.HotkeyKey = current.HotkeyKey;
+            }
+        }
+
+        /// <summary>
+        /// Datei atomar einsetzen: erst vollständig in eine Hilfsdatei im Zielordner schreiben (CreateNew, Flush auf den
+        /// Datenträger, Größe prüfen), dann das Ziel in einem Schritt ersetzen (File.Replace bzw. File.Move). Bricht
+        /// Dock Pilot dabei ab, bleibt das Ziel entweder alt oder neu, nie halb geschrieben.
+        /// </summary>
+        private static void Put(string source, string target)
+        {
+            string dir = Path.GetDirectoryName(target);
+            string tmp = Path.Combine(dir, "." + Path.GetFileName(target) + ".import-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                long length;
+                using (FileStream src = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (FileStream dst = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.WriteThrough))
+                {
+                    src.CopyTo(dst);
+                    dst.Flush(true);
+                    length = src.Length;
+                    if (dst.Length != length) throw new IOException("Datei unvollständig geschrieben: " + Path.GetFileName(target));
+                }
+                if (File.Exists(target)) File.Replace(tmp, target, null);
+                else File.Move(tmp, target);
+            }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
             }
         }
 

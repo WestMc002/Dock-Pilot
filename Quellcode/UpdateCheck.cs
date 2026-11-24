@@ -1422,7 +1422,7 @@ try {
   $msg = 'FEHLER Update-Skript nicht geladen, nichts veraendert: ' + $_.Exception.Message
   if ($Elevated) {
     # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner; den Neustart macht der nicht erhoehte Helfer
-    try { New-WorkFolder; $msg | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {}
+    try { New-WorkFolder; $rf = (Join-Path $Work ('Update-' + $AttemptId + '.log')); $msg | Out-File -LiteralPath ($rf + '.teil') -Encoding utf8; Move-Item -LiteralPath ($rf + '.teil') -Destination $rf -Force } catch {}
   } else {
     try { $msg | Out-File -LiteralPath $Log -Encoding utf8 } catch {}
     $deadline = (Get-Date).AddSeconds(60)
@@ -1767,7 +1767,7 @@ try {
 }
 if ($Elevated) {
   # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner schreiben; Neustart macht der nicht erhoehte Prozess
-  if ($workReady) { try { $result | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {} }
+  if ($workReady) { try { $rf = (Join-Path $Work ('Update-' + $AttemptId + '.log')); $result | Out-File -LiteralPath ($rf + '.teil') -Encoding utf8; Move-Item -LiteralPath ($rf + '.teil') -Destination $rf -Force } catch {} }
 } else {
   try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch { $noRestart = $true }
   if (-not $noRestart) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -2021,7 +2021,7 @@ if ($Elevated) {
   # Ergebnis nur in einen gepruefen Arbeitsordner; sonst ohne Update.log beenden (Neustarthelfer: Ergebnis unbekannt,
   # kein Neustart)
   if (-not $workTrusted) { if ($haveLock) { try { $lock.ReleaseMutex() } catch {} }; exit 1 }
-  try { $result | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {}
+  try { $rf = (Join-Path $Work ('Update-' + $AttemptId + '.log')); $result | Out-File -LiteralPath ($rf + '.teil') -Encoding utf8; Move-Item -LiteralPath ($rf + '.teil') -Destination $rf -Force } catch {}
 } else {
   try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch { $noRestart = $true }
   if ($result.StartsWith('ZURUECK')) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -2078,11 +2078,26 @@ if ($Installer -le 0) { exit }
 $hInst = [IntPtr]::Zero
 $waitNote = $null
 try {
-  $sig = '[DllImport(""kernel32.dll"", SetLastError = true)] public static extern IntPtr OpenProcess(int access, bool inherit, int pid); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr handle, int ms); [DllImport(""kernel32.dll"")] public static extern bool CloseHandle(IntPtr handle);'
+  $sig = '[DllImport(""kernel32.dll"", SetLastError = true)] public static extern IntPtr OpenProcess(int access, bool inherit, int pid); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr handle, int ms); [DllImport(""kernel32.dll"")] public static extern bool CloseHandle(IntPtr handle); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);'
   $k32 = Add-Type -MemberDefinition $sig -Name 'Warten' -Namespace 'DockPilotNeustart' -PassThru
   $hInst = $k32::OpenProcess(0x00101000, $false, $Installer)
   if ($hInst -eq [IntPtr]::Zero) { $waitNote = 'Kein Zugriff auf das Update (Windows-Fehler ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + '), Rueckfall auf die Prozess-ID.' }
 } catch { $waitNote = 'Warten ueber Handle nicht moeglich, Rueckfall auf die Prozess-ID: ' + $_.Exception.Message }
+# Startzeit des Installers merken, wenn Windows sie liefert (ueber den Handle oder mit eingeschraenktem Abfragerecht):
+# Beim Rueckfall auf die Prozess-ID gilt ein Prozess mit anderer Startzeit nicht als der Installer (wiederverwendete ID)
+function Get-StartTicks([IntPtr]$h, [int]$id) {
+  try {
+    $own = $false
+    if ($h -eq [IntPtr]::Zero) { $h = $k32::OpenProcess(0x1000, $false, $id); $own = $true }
+    if ($h -eq [IntPtr]::Zero) { return $null }
+    try {
+      $c = [long]0; $x = [long]0; $kt = [long]0; $ut = [long]0
+      if ($k32::GetProcessTimes($h, [ref]$c, [ref]$x, [ref]$kt, [ref]$ut) -and $c -ne 0) { return $c }
+    } finally { if ($own) { [void]$k32::CloseHandle($h) } }
+  } catch {}
+  return $null
+}
+$installerStart = Get-StartTicks $hInst $Installer
 # Kein Handle (z. B. UAC mit einem anderen Administratorkonto): Rueckfall auf die Prozess-ID. Bis zur Bestaetigung
 # haelt Dock Pilot seinen eigenen Handle offen; die Prozess-ID kann bis dahin nicht neu vergeben werden.
 # Empfang bestaetigen: erst danach gibt Dock Pilot das erhoehte Skript frei
@@ -2098,11 +2113,22 @@ function Test-Installer {
     try { [void]$k32::CloseHandle($hInst) } catch {}
     $script:hInst = [IntPtr]::Zero
   }
-  return [bool](Get-Process -Id $Installer -ErrorAction SilentlyContinue)
+  if (-not (Get-Process -Id $Installer -ErrorAction SilentlyContinue)) { return $false }
+  $now = $null
+  if ($installerStart) { $now = Get-StartTicks ([IntPtr]::Zero) $Installer; if ($now -and $now -ne $installerStart) { return $false } }
+  # Ohne vergleichbare Startzeit: Abschluss ueber das Ergebnis genau dieses Versuchs erkennen. Das Skript
+  # veroeffentlicht Update-<Kennung>.log als Letztes; steht die Datei seit 10 s, gilt das Update als beendet (eine
+  # wiederverwendete Prozess-ID haelt den Neustart dann nicht auf).
+  if (-not ($installerStart -and $now) -and (Test-Path -LiteralPath $workLog)) {
+    if (-not $script:logSeen) { $script:logSeen = Get-Date }
+    elseif (((Get-Date) - $script:logSeen).TotalSeconds -ge 10) { return $false }
+  }
+  return $true
 }
 # Neustart erst nach bestaetigtem Ende des Installers; bei Fristablauf Fehler melden und nicht starten
 $end = (Get-Date).AddMinutes(15)
-$workLog = Join-Path $Work 'Update.log'
+# Ergebnis genau dieses Versuchs (Update-<Kennung>.log im Arbeitsordner, vom Skript als Letztes atomar veroeffentlicht)
+$workLog = Join-Path $Work ('Update-' + $AttemptId + '.log')
 $finished = $false
 while ((Get-Date) -lt $end) {
   if (-not (Test-Installer)) { $finished = $true; break }
