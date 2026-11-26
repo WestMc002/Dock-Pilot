@@ -98,6 +98,7 @@ namespace DockPilot
 
                         // Ordnermenü (KkMenu-Ersatz) – über seinem Symbol im Dock
                         MenuBuilder mb = new MenuBuilder();
+                        mb.FolderSize(settings); // wie im Dock: Schrift- und Symbolgröße usw. aus den Einstellungen
                         mb.FillFolder(mb.Menu.Items, tools, true, false, false);
                         mb.End();
                         {

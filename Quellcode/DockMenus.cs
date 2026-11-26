@@ -90,7 +90,8 @@ namespace DockPilot
                 parts.Add("^" + Regex.Escape(p).Replace(@"\*", ".*").Replace(@"\?", ".") + "$");
             }
             if (parts.Count == 0) return null;
-            return new Regex(string.Join("|", parts.ToArray()), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // Zeitlimit wie bei allen fremden Daten (Muster können aus einer Sicherung stammen)
+            return new Regex(string.Join("|", parts.ToArray()), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, Updater.RxTimeout);
         }
 
         // Verzögerung beim Aufklappen von Untermenüs: WinForms nimmt die Windows-Einstellung (MenuShowDelay) und bietet
@@ -880,7 +881,12 @@ namespace DockPilot
         private bool Shown(string path, bool file)
         {
             string name = Path.GetFileName(path.TrimEnd('\\'));
-            if (_exclude != null && _exclude.IsMatch(name)) return false;
+            if (_exclude != null)
+            {
+                // Zeitüberschreitung: nicht eindeutig prüfbar, der Eintrag wird ausgeblendet
+                try { if (_exclude.IsMatch(name)) return false; }
+                catch (RegexMatchTimeoutException) { return false; }
+            }
             if (_showHidden) return true;
             return Visible(path) && (!file || !HiddenNames.Contains(name));
         }

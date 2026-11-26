@@ -105,7 +105,7 @@ namespace DockPilot
         public string LastUpdateCheck = "";       // Zeitpunkt der letzten erfolgreichen Prüfung (UTC, ISO 8601)
         public bool NavPinned = true;             // Einstellungsfenster: Navigation angepinnt (wird sofort gespeichert)
         public int MenuFontSize = 95;             // Ordnermenüs: Schriftgröße in Zehntel-Punkt (95 = 9,5 pt wie alle Menüs)
-        public int MenuIconSize = 16;             // Ordnermenüs: Symbolgröße in Pixeln bei 100 % (16 = wie alle Menüs)
+        public int MenuIconSize = 18;             // Ordnermenüs: Symbolgröße in Pixeln bei 100 % (16 = wie alle Menüs)
         public int MenuRowSpacing = 1;            // Ordnermenüs: Zeilenabstand 0 = kompakt, 1 = normal, 2 = luftig
         public int MenuMaxWidth = 0;              // Ordnermenüs: Höchstbreite in Pixeln bei 100 % (0 = unbegrenzt), längere Namen mit „…“
         public int MenuMaxItems = 0;              // Ordnermenüs: höchstens so viele Einträge, danach Bildlauf (0 = bis zum Bildschirmrand)

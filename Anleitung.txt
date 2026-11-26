@@ -172,7 +172,7 @@ Fehlerprotokoll, Sichern und Wiederherstellen sowie Standardwerte.
   zeigt ein kleines Beispiel-Dock Zoom-Effekt und Hervorhebung sofort.
 - Beschriftung: ein/aus, Schriftart (Standard: Schrift von Windows), Schriftgröße, fett, Farbe (weiß, schwarz, wie
   Windows, Akzentfarbe oder eigene Farbe), Stärke und Größe des Schattens
-- Ordnermenüs: Schriftgröße (Standard 9,5 pt), Symbolgröße (Standard 16 px),
+- Ordnermenüs: Schriftgröße (Standard 9,5 pt), Symbolgröße (Standard 18 px),
   Zeilenabstand, Höchstbreite (längere Namen mit "…"), höchstens so viele
   Einträge (danach blättern), Dateiendungen, versteckte Dateien, "Ordner öffnen"
   oben im Menü, Verzögerung für Untermenüs.

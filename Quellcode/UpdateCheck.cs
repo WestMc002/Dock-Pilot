@@ -335,7 +335,10 @@ namespace DockPilot
             if (values["Programm"] != "Dock Pilot") { detail = "Das Manifest gehört zu „" + values["Programm"] + "“, nicht zu Dock Pilot."; return Invalid; }
             if (values["Version"] != version) { detail = "Das Manifest nennt Version " + values["Version"] + ", das Release " + version + "."; return Invalid; }
             if (values["Datei"] != AssetName(version)) { detail = "Das Manifest nennt die Datei „" + values["Datei"] + "“."; return Invalid; }
-            if (!Regex.IsMatch(values["SHA256"], "^[0-9a-f]{64}$")) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
+            bool shaOk;
+            try { shaOk = Regex.IsMatch(values["SHA256"], "^[0-9a-f]{64}$", RegexOptions.None, RxTimeout); }
+            catch (RegexMatchTimeoutException) { shaOk = false; } // nicht eindeutig prüfbar = ungültig
+            if (!shaOk) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
             sha = values["SHA256"].ToUpperInvariant();
             return null;
         }
@@ -551,8 +554,16 @@ namespace DockPilot
         /// <summary>Gültige Versuchskennung (32 Hex-Zeichen, klein)?</summary>
         public static bool IsAttemptId(string id)
         {
-            return id != null && Regex.IsMatch(id, "^[0-9a-f]{32}$");
+            if (id == null || id.Length != 32) return false;
+            try { return Regex.IsMatch(id, "^[0-9a-f]{32}$", RegexOptions.None, RxTimeout); }
+            catch (RegexMatchTimeoutException) { return false; }
         }
+
+        /// <summary>
+        /// Zeitlimit für Regex-Prüfungen fremder Daten (Manifest, Journal, Befehlszeile, Ausschlussmuster). Eine
+        /// Zeitüberschreitung gilt als „nicht eindeutig prüfbar“ und führt zur Ablehnung.
+        /// </summary>
+        internal static readonly TimeSpan RxTimeout = TimeSpan.FromMilliseconds(250);
 
         /// <summary>
         /// ZIP herunterladen, Prüfsumme (aus dem signierten Manifest) kontrollieren und das Update-Skript starten (blockierend – im Hintergrund
@@ -560,7 +571,7 @@ namespace DockPilot
         /// Anleitung atomar (mit Journal und Rücksicherung) und startet Dock Pilot neu. Die Einstellungen bleiben unberührt.
         /// Danach muss sich Dock Pilot beenden. Ohne Schreibrechte im Programmordner läuft das Skript mit Administratorrechten
         /// in einem geschützten Arbeitsordner; den Neustart übernimmt dann ein Helfer mit normalen Rechten.
-        /// Vorlage: RDP Pilot 1.57 (Journalformat 2, Ergebnis je Versuch, Ablauf mit Rechteerhöhung).
+        /// Vorlage: RDP Pilot 1.57 (Journalformat 2, Ergebnis je Versuch, Ablauf mit Rechteerhöhung), Neustarthelfer und Steuerdateien nach RDP Pilot 1.58.
         /// </summary>
         public static void Install(ReleaseInfo release) { Install(release, false); }
 
@@ -696,7 +707,6 @@ namespace DockPilot
             Var(vars, "TargetId", TargetId);
             Var(vars, "TempRoot", Folder);
             Var(vars, "Log", logFile);
-            Var(vars, "SharedLog", "");
             vars.Append("$LegacyFallback = $false\n");
             Var(vars, "AttemptId", attemptId);
             Var(vars, "ReleaseId", attemptId);
@@ -777,7 +787,7 @@ namespace DockPilot
             while (true)
             {
                 string ack = null;
-                try { if (File.Exists(ackFile)) ack = File.ReadAllText(ackFile).Trim(); } catch { }
+                try { if (File.Exists(ackFile)) ack = ReadSmall(ackFile); } catch { }
                 if (ack == id.ToString(CultureInfo.InvariantCulture)) break;
                 bool exited = true;
                 try { exited = helper.HasExited; } catch { }
@@ -821,7 +831,6 @@ namespace DockPilot
             Var(r, "StartFile", startFile);
             Var(r, "ReadyFile", readyFile);
             Var(r, "AckFile", ackFile);
-            Var(r, "SharedLog", string.IsNullOrEmpty(attempt) ? LogFile : "");
             r.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
             return Process.Start(PowerShell(r + RestartScript));
         }
@@ -948,6 +957,13 @@ namespace DockPilot
         /// </summary>
         private static bool ReadJournal(string dir, out List<JournalEntry> entries)
         {
+            // Zeitüberschreitung beim Regex-Abgleich: nicht eindeutig prüfbar = Stand ungeklärt
+            try { return ReadJournalCore(dir, out entries); }
+            catch (RegexMatchTimeoutException) { entries = null; return false; }
+        }
+
+        private static bool ReadJournalCore(string dir, out List<JournalEntry> entries)
+        {
             entries = null;
             string exe = Application.ExecutablePath;
             string manual = Path.Combine(Path.GetDirectoryName(exe), ManualName);
@@ -981,7 +997,8 @@ namespace DockPilot
             {
                 for (; i < lines.Length && lines[i].StartsWith("Geplant ", StringComparison.Ordinal); i++)
                 {
-                    Match g = Regex.Match(lines[i], @"^Geplant (\d+): Ziel: (.+)$");
+                    if (lines[i].Length > 4096) return false;
+                    Match g = Regex.Match(lines[i], @"^Geplant (\d+): Ziel: (.+)$", RegexOptions.None, RxTimeout);
                     if (!g.Success || g.Groups[1].Value != (planned.Count + 1).ToString(CultureInfo.InvariantCulture) || !allowed(g.Groups[2].Value)) return false;
                     string p = g.Groups[2].Value;
                     if (planned.Exists(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase))) return false;
@@ -998,7 +1015,8 @@ namespace DockPilot
             for (; i < lines.Length; i++)
             {
                 string line = lines[i];
-                Match e = Regex.Match(line, @"^Ersetzt (\d+)$");
+                if (line.Length > 4096) return false; // so lang wird keine gültige Zeile
+                Match e = Regex.Match(line, @"^Ersetzt (\d+)$", RegexOptions.None, RxTimeout);
                 if (e.Success)
                 {
                     if (list.Count == 0 || replacedLast || e.Groups[1].Value != list[list.Count - 1].N) return false;
@@ -1006,8 +1024,8 @@ namespace DockPilot
                     continue;
                 }
                 Match m = withHash
-                    ? Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)(?: \| Sicherungsdatei: .+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: (.+)$")
-                    : Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$");
+                    ? Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)(?: \| Sicherungsdatei: .+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: (.+)$", RegexOptions.None, RxTimeout)
+                    : Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$", RegexOptions.None, RxTimeout);
                 if (!m.Success) return false;
                 JournalEntry entry = new JournalEntry();
                 entry.N = m.Groups[1].Value; entry.Kind = m.Groups[2].Value; entry.Dst = m.Groups[3].Value;
@@ -1095,6 +1113,14 @@ namespace DockPilot
             string dir = PendingRestore();
             if (dir == null) return false;
             Log.Write("Update", "Nicht abgeschlossenes Update gefunden: " + dir);
+            if (ElevatedWithoutHash(dir))
+            {
+                Log.Write("Update", "Wiederherstellung mit Administratorrechten abgelehnt: Sicherungen ohne Prüfsumme (Format 1.69/1.70).");
+                if (MessageBox.Show(owner, WithoutHashText + "\n\nDownload-Seite jetzt öffnen?",
+                    "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    try { Process.Start(new ProcessStartInfo(ReleasesPage) { UseShellExecute = true }); } catch { }
+                return false;
+            }
             if (MessageBox.Show(owner,
                 PendingText + "\n\nDock Pilot stellt jetzt die vorherige Version wieder her und startet danach neu.\n\nJetzt wiederherstellen?",
                 "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return false;
@@ -1104,6 +1130,37 @@ namespace DockPilot
                 Log.Write("Update", "Wiederherstellung nicht gestartet: " + ex.Message);
                 MessageBox.Show(owner, ex.Message, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Wiederherstellung mit Administratorrechten (Arbeitsordner unter %ProgramData%) nur mit Prüfsumme je Sicherung
+        /// aus dem Journal. Sicherungen im Format 1.69/1.70 haben keine: dann nicht mit Administratorrechten zurücksetzen,
+        /// sondern das signierte Paket neu installieren lassen (das Reparatur-Skript prüft das noch einmal selbst).
+        /// </summary>
+        private static bool ElevatedWithoutHash(string dir)
+        {
+            string data = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            if (!string.Equals(Path.GetDirectoryName(dir), data, StringComparison.OrdinalIgnoreCase)) return false;
+            List<JournalEntry> entries;
+            try { if (!ReadJournal(dir, out entries)) return false; } catch { return false; }
+            foreach (JournalEntry e in entries)
+                if (e.Kind == "Sicherung" && e.Hash.Length == 0) return true;
+            return false;
+        }
+
+        private const string WithoutHashText = "Das nicht abgeschlossene Update stammt aus einer älteren Version, deren Sicherungen keine Prüfsumme haben. Mit Administratorrechten wird daraus nichts zurückgesetzt.\n\nBitte Dock Pilot neu herunterladen (signiertes Paket von GitHub) und die Programmdatei ersetzen.";
+
+        /// <summary>Kleine Steuerdatei aus dem Temp-Ordner lesen: einmal öffnen, höchstens 257 Bytes, mehr = ungültig (null).</summary>
+        private static string ReadSmall(string file)
+        {
+            using (FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                byte[] buf = new byte[257];
+                int n = 0, k;
+                while (n < buf.Length && (k = fs.Read(buf, n, buf.Length - n)) > 0) n += k;
+                if (n > 256) return null;
+                return Encoding.UTF8.GetString(buf, 0, n).Trim().TrimStart('\uFEFF');
             }
         }
 
@@ -1120,12 +1177,14 @@ namespace DockPilot
             if (!protectedDir && !writable)
                 throw new Exception("Die vorherige Version lässt sich nicht automatisch wiederherstellen. Bitte Dock Pilot neu herunterladen.");
             bool elevated = protectedDir;
+            if (elevated && ElevatedWithoutHash(dir)) throw new Exception(WithoutHashText);
             string attemptId = Guid.NewGuid().ToString("N");
             int pid = Process.GetCurrentProcess().Id;
             StringBuilder vars = new StringBuilder();
             vars.Append("$ProcessId = ").Append(pid).Append("\n");
             // Die wiederhergestellte EXE kann älter als 1.71 sein: Start-Program prüft ihre Version. Ab 1.71 mit Kennung
-            // und eigener Ergebnisdatei, sonst ohne Kennung und mit Kopie in die gemeinsame Update.log
+            // und eigener Ergebnisdatei, sonst ohne Kennung; das Ergebnis zeigt dann das Skript selbst an (die gemeinsame
+            // Update.log wird nicht mehr beschrieben)
             Var(vars, "AttemptId", attemptId);
             vars.Append("$LegacyFallback = $true\n");
             Var(vars, "ReleaseId", attemptId);
@@ -1137,7 +1196,6 @@ namespace DockPilot
             Var(vars, "LockName", LockName);
             Var(vars, "TargetId", TargetId);
             Var(vars, "Log", LogFor(attemptId));
-            Var(vars, "SharedLog", LogFile);
             vars.Append("$Elevated = $").Append(elevated ? "true" : "false").Append("\n");
             vars.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
             // Reparatur-Skript als Datei im Temp-Ordner, auf der Befehlszeile nur Lader, Werte und SHA-256 (wie beim
@@ -1355,7 +1413,7 @@ namespace DockPilot
             catch { return null; }
         }
 
-        // Skripte nach RDP Pilot 1.57 (Journalformat 2, Ergebnis je Versuch, Ablauf mit Rechteerhöhung), nur Namen
+        // Skripte nach RDP Pilot 1.57/1.58 (Journalformat 2, Ergebnis je Versuch, Ablauf mit Rechteerhöhung), nur Namen
         // angepasst. Nur ASCII-Anführungszeichen. InstallLoader/RepairLoader stehen mit den Werten auf der Befehlszeile,
         // lesen $ScriptFile einmal in den Speicher, prüfen die SHA-256 gegen $ScriptHash und führen genau diese Bytes aus.
         // RestartScript: Neustarthelfer mit normalen Rechten für Update und Wiederherstellung mit Administratorrechten.
@@ -1367,17 +1425,64 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis im Arbeitsordner je Versuch als Letztes atomar veroeffentlichen: erst .teil, dann umbenennen
+function Publish-WorkResult([string]$text) {
+  $final = Join-Path $Work ('Update-' + $AttemptId + '.log')
+  $tmp = $final + '.teil'
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  $text | Out-File -LiteralPath $tmp -Encoding utf8 -ErrorAction Stop
+  Move-Item -LiteralPath $tmp -Destination $final -Force -ErrorAction Stop
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Dock Pilot', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 1.71 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 1.71 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'1.71' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern -and $AttemptId) {
+    $a = @('--nach-update', $AttemptId)
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result
 }
 $ErrorActionPreference = 'Stop'
 # geschuetzten Arbeitsordner anlegen: Besitzer Administratoren, schreiben nur SYSTEM und Administratoren, lesen angemeldete Benutzer
@@ -1422,7 +1527,7 @@ try {
   $msg = 'FEHLER Update-Skript nicht geladen, nichts veraendert: ' + $_.Exception.Message
   if ($Elevated) {
     # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner; den Neustart macht der nicht erhoehte Helfer
-    try { New-WorkFolder; $rf = (Join-Path $Work ('Update-' + $AttemptId + '.log')); $msg | Out-File -LiteralPath ($rf + '.teil') -Encoding utf8; Move-Item -LiteralPath ($rf + '.teil') -Destination $rf -Force } catch {}
+    try { New-WorkFolder; Publish-WorkResult $msg } catch {}
   } else {
     try { $msg | Out-File -LiteralPath $Log -Encoding utf8 } catch {}
     $deadline = (Get-Date).AddSeconds(60)
@@ -1505,7 +1610,7 @@ try {
   # Neustarthelfer bereit ist und die Startbestaetigung geschrieben wurde; ohne Freigabe nichts veraendern.
   if ($Elevated) {
     $released = $false
-    try { if ((Get-Item -LiteralPath $ReleaseFile).Length -le 256) { $released = ([System.IO.File]::ReadAllText($ReleaseFile).Trim() -ceq $ReleaseId) } } catch {}
+    $released = ((Read-Small $ReleaseFile) -ceq $ReleaseId)
     if (-not $released) { throw 'Das Update wurde nicht freigegeben.' }
   }
   if ($Elevated) {
@@ -1767,7 +1872,7 @@ try {
 }
 if ($Elevated) {
   # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner schreiben; Neustart macht der nicht erhoehte Prozess
-  if ($workReady) { try { $rf = (Join-Path $Work ('Update-' + $AttemptId + '.log')); $result | Out-File -LiteralPath ($rf + '.teil') -Encoding utf8; Move-Item -LiteralPath ($rf + '.teil') -Destination $rf -Force } catch {} }
+  if ($workReady) { try { Publish-WorkResult $result } catch {} }
 } else {
   try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch { $noRestart = $true }
   if (-not $noRestart) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1791,17 +1896,64 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis im Arbeitsordner je Versuch als Letztes atomar veroeffentlichen: erst .teil, dann umbenennen
+function Publish-WorkResult([string]$text) {
+  $final = Join-Path $Work ('Update-' + $AttemptId + '.log')
+  $tmp = $final + '.teil'
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  $text | Out-File -LiteralPath $tmp -Encoding utf8 -ErrorAction Stop
+  Move-Item -LiteralPath $tmp -Destination $final -Force -ErrorAction Stop
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Dock Pilot', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 1.71 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 1.71 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'1.71' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern -and $AttemptId) {
+    $a = @('--nach-update', $AttemptId)
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result
 }
 $code = $null
 try {
@@ -1820,7 +1972,7 @@ try {
   if ($h -cne $ScriptHash) { throw 'Das Reparatur-Skript wurde veraendert.' }
   $code = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($b)
 } catch {
-  # nichts veraendert. Erhoeht: ohne Update.log beenden (Neustarthelfer: Ergebnis unbekannt, kein Neustart).
+  # nichts veraendert. Erhoeht: ohne Ergebnisdatei beenden (Neustarthelfer: Ergebnis unbekannt, kein Neustart).
   # Ohne Adminrechte: FEHLER ins Protokoll und die bisherige Version wieder starten.
   if (-not $Elevated) {
     $msg = 'FEHLER Reparatur-Skript nicht geladen, nichts veraendert: ' + $_.Exception.Message
@@ -1855,7 +2007,7 @@ try {
   # Neustarthelfer bereit ist und die Startbestaetigung geschrieben wurde; ohne Freigabe nichts veraendern.
   if ($Elevated) {
     $released = $false
-    try { if ((Get-Item -LiteralPath $ReleaseFile).Length -le 256) { $released = ([System.IO.File]::ReadAllText($ReleaseFile).Trim() -ceq $ReleaseId) } } catch {}
+    $released = ((Read-Small $ReleaseFile) -ceq $ReleaseId)
     if (-not $released) { throw 'Die Wiederherstellung wurde nicht freigegeben.' }
   }
   # dieselbe Sperre wie das Update: nie zwei Wiederherstellungen oder Update und Wiederherstellung gleichzeitig
@@ -1946,6 +2098,7 @@ try {
   while ($i -lt $lines.Count -and -not $lines[$i].StartsWith($first)) { if ($lines[$i] -cmatch $keywords) { throw 'Das Journal ist nicht lesbar.' }; $i++ }
   if ($format2) {
     while ($i -lt $lines.Count -and $lines[$i].StartsWith('Geplant ')) {
+      if ($lines[$i].Length -gt 4096) { throw 'Das Journal ist nicht lesbar.' }
       if ($lines[$i] -cnotmatch '^Geplant (\d+): Ziel: (.+)$') { throw 'Das Journal ist nicht lesbar.' }
       if ($Matches[1] -ne [string]($planned.Count + 1) -or $allowed -notcontains $Matches[2] -or $planned -contains $Matches[2]) { throw 'Unerwarteter Eintrag im Journal.' }
       $planned += $Matches[2]
@@ -1960,6 +2113,8 @@ try {
   $replacedLast = $true
     for (; $i -lt $lines.Count; $i++) {
       $line = $lines[$i]
+      # so lang wird keine gueltige Zeile; begrenzt zugleich die Laufzeit der Muster unten
+      if ($line.Length -gt 4096) { throw 'Das Journal ist nicht lesbar.' }
       if ($line -cmatch '^Ersetzt (\d+)$') {
         if ($entries.Count -eq 0 -or $replacedLast -or $Matches[1] -ne $entries[$entries.Count - 1].N) { throw 'Das Journal ist nicht lesbar.' }
         $replacedLast = $true
@@ -1969,6 +2124,8 @@ try {
       else { $ok = $line -cmatch '^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$' }
       if (-not $ok) { throw 'Das Journal ist nicht lesbar.' }
       $e = @{ N = $Matches[1]; Kind = $Matches[2]; Dst = $Matches[3]; Hash = [string]$Matches[4]; Tmp = $Matches[5] }
+      # mit Administratorrechten nur Sicherungen mit Pruefsumme aus dem Journal (Format 1.69/1.70 hat keine)
+      if ($Elevated -and $e.Kind -eq 'Sicherung' -and $e.Hash.Length -eq 0) { throw 'Die Sicherung stammt aus einer aelteren Version ohne Pruefsumme und wird mit Administratorrechten nicht zurueckgesetzt. Bitte Dock Pilot neu herunterladen.' }
       if ($e.N -ne [string]($entries.Count + 1) -or ($format2 -and $entries.Count -gt 0 -and -not $replacedLast) -or $allowed -notcontains $e.Dst) { throw 'Unerwarteter Eintrag im Journal.' }
       if ($format2 -and ($entries.Count -ge $planned.Count -or $planned[$entries.Count] -ne $e.Dst)) { throw 'Unerwarteter Eintrag im Journal.' }
       if ($withHash) {
@@ -2018,10 +2175,10 @@ try {
 }
 if ($haveLock) { try { $lock.ReleaseMutex() } catch {} }
 if ($Elevated) {
-  # Ergebnis nur in einen gepruefen Arbeitsordner; sonst ohne Update.log beenden (Neustarthelfer: Ergebnis unbekannt,
+  # Ergebnis nur in einen gepruefen Arbeitsordner; sonst ohne Ergebnisdatei beenden (Neustarthelfer: Ergebnis unbekannt,
   # kein Neustart)
   if (-not $workTrusted) { if ($haveLock) { try { $lock.ReleaseMutex() } catch {} }; exit 1 }
-  try { $rf = (Join-Path $Work ('Update-' + $AttemptId + '.log')); $result | Out-File -LiteralPath ($rf + '.teil') -Encoding utf8; Move-Item -LiteralPath ($rf + '.teil') -Destination $rf -Force } catch {}
+  try { Publish-WorkResult $result } catch {}
 } else {
   try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch { $noRestart = $true }
   if ($result.StartsWith('ZURUECK')) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -2040,17 +2197,64 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis im Arbeitsordner je Versuch als Letztes atomar veroeffentlichen: erst .teil, dann umbenennen
+function Publish-WorkResult([string]$text) {
+  $final = Join-Path $Work ('Update-' + $AttemptId + '.log')
+  $tmp = $final + '.teil'
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  $text | Out-File -LiteralPath $tmp -Encoding utf8 -ErrorAction Stop
+  Move-Item -LiteralPath $tmp -Destination $final -Force -ErrorAction Stop
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Dock Pilot', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 1.71 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 1.71 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'1.71' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern -and $AttemptId) {
+    $a = @('--nach-update', $AttemptId)
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result
 }
 $ErrorActionPreference = 'SilentlyContinue'
 # Startbestaetigung abwarten: Dock Pilot schreibt nach dem Start des erhoehten Skripts dessen Prozess-ID in $StartFile
@@ -2061,7 +2265,7 @@ try { 'bereit' | Out-File -LiteralPath $ReadyFile -Encoding ascii } catch {}
 $end = (Get-Date).AddMinutes(15)
 while ((Get-Date) -lt $end) {
   if (Test-Path -LiteralPath $StartFile) {
-    $s = [string](Get-Content -LiteralPath $StartFile -TotalCount 1)
+    $s = [string](Read-Small $StartFile)
     Remove-Item -LiteralPath $StartFile -Force
     if ($s.Trim() -match '^[0-9]{1,10}$') { $Installer = [int]$s.Trim() }
     break
@@ -2076,59 +2280,65 @@ if ($Installer -le 0) { exit }
 # erlaubt). Dock Pilot haelt seinen eigenen Handle offen, bis diese Bestaetigung da ist: Die Prozess-ID kann bis
 # dahin nicht neu vergeben werden, danach haelt dieser Handle den Prozess fest.
 $hInst = [IntPtr]::Zero
+$k32 = $null
 $waitNote = $null
 try {
-  $sig = '[DllImport(""kernel32.dll"", SetLastError = true)] public static extern IntPtr OpenProcess(int access, bool inherit, int pid); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr handle, int ms); [DllImport(""kernel32.dll"")] public static extern bool CloseHandle(IntPtr handle); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);'
+  $sig = '[DllImport(""kernel32.dll"", SetLastError = true)] public static extern IntPtr OpenProcess(int access, bool inherit, int pid); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr handle, int ms); [DllImport(""kernel32.dll"")] public static extern bool CloseHandle(IntPtr handle); [DllImport(""kernel32.dll"")] public static extern bool GetProcessTimes(IntPtr handle, out long creation, out long exit, out long kernel, out long user);'
   $k32 = Add-Type -MemberDefinition $sig -Name 'Warten' -Namespace 'DockPilotNeustart' -PassThru
   $hInst = $k32::OpenProcess(0x00101000, $false, $Installer)
   if ($hInst -eq [IntPtr]::Zero) { $waitNote = 'Kein Zugriff auf das Update (Windows-Fehler ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + '), Rueckfall auf die Prozess-ID.' }
 } catch { $waitNote = 'Warten ueber Handle nicht moeglich, Rueckfall auf die Prozess-ID: ' + $_.Exception.Message }
-# Startzeit des Installers merken, wenn Windows sie liefert (ueber den Handle oder mit eingeschraenktem Abfragerecht):
-# Beim Rueckfall auf die Prozess-ID gilt ein Prozess mit anderer Startzeit nicht als der Installer (wiederverwendete ID)
-function Get-StartTicks([IntPtr]$h, [int]$id) {
-  try {
-    $own = $false
-    if ($h -eq [IntPtr]::Zero) { $h = $k32::OpenProcess(0x1000, $false, $id); $own = $true }
-    if ($h -eq [IntPtr]::Zero) { return $null }
-    try {
-      $c = [long]0; $x = [long]0; $kt = [long]0; $ut = [long]0
-      if ($k32::GetProcessTimes($h, [ref]$c, [ref]$x, [ref]$kt, [ref]$ut) -and $c -ne 0) { return $c }
-    } finally { if ($own) { [void]$k32::CloseHandle($h) } }
-  } catch {}
+# Startzeit des erhoehten Skripts merken (ueber den Handle bzw. OpenProcess 0x1000), damit im Rueckfall auf die
+# Prozess-ID ein Prozess mit anderer Startzeit nicht als das Update gilt
+function Get-StartTicks([IntPtr]$h) {
+  if ($h -eq [IntPtr]::Zero -or -not $k32) { return $null }
+  $c = 0L; $e = 0L; $kt = 0L; $u = 0L
+  if ($k32::GetProcessTimes($h, [ref]$c, [ref]$e, [ref]$kt, [ref]$u)) { return $c }
   return $null
 }
-$installerStart = Get-StartTicks $hInst $Installer
+function Get-InstallerTicks {
+  if ($hInst -ne [IntPtr]::Zero) { return (Get-StartTicks $hInst) }
+  if (-not $k32) { return $null }
+  $hq = $k32::OpenProcess(0x1000, $false, $Installer)
+  if ($hq -eq [IntPtr]::Zero) { return $null }
+  try { return (Get-StartTicks $hq) } finally { [void]$k32::CloseHandle($hq) }
+}
+$instTicks = Get-InstallerTicks
 # Kein Handle (z. B. UAC mit einem anderen Administratorkonto): Rueckfall auf die Prozess-ID. Bis zur Bestaetigung
 # haelt Dock Pilot seinen eigenen Handle offen; die Prozess-ID kann bis dahin nicht neu vergeben werden.
 # Empfang bestaetigen: erst danach gibt Dock Pilot das erhoehte Skript frei
 try { [string]$Installer | Out-File -LiteralPath $AckFile -Encoding ascii } catch { exit }
-# $true = laeuft noch. WAIT_OBJECT_0 (0) = beendet, WAIT_TIMEOUT (258) = laeuft; WAIT_FAILED: Fehlercode merken und
-# ab dann ueber die Prozess-ID pruefen
+# $true = laeuft noch. Liegt das Ergebnis dieses Versuchs vor, ist das Skript fertig (es schreibt es als Letztes).
+# WAIT_OBJECT_0 (0) = beendet, WAIT_TIMEOUT (258) = laeuft; WAIT_FAILED: Fehlercode merken und ab dann ueber die
+# Prozess-ID pruefen. Im Rueckfall gilt ein Prozess mit anderer Startzeit nicht als das Update.
+$workLog = Join-Path $Work ('Update-' + $AttemptId + '.log')
+$unclearEnd = $null
+# $endConfirmed: Ende des Updates belegt (Ergebnisdatei, Handle signalisiert, kein Prozess mit der ID, andere
+# Startzeit). Nur dann darf der Versuchsordner geloescht werden; sonst bleibt er fuer die spaetere Bereinigung.
+$endConfirmed = $false
 function Test-Installer {
+  if (Test-Path -LiteralPath $workLog) { $script:endConfirmed = $true; return $false }
   if ($hInst -ne [IntPtr]::Zero) {
     $r = $k32::WaitForSingleObject($hInst, 0)
-    if ($r -eq 0) { return $false }
+    if ($r -eq 0) { $script:endConfirmed = $true; return $false }
     if ($r -eq 258) { return $true }
     $script:waitNote = 'Warten auf das Update fehlgeschlagen (Windows-Fehler ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + '), Rueckfall auf die Prozess-ID.'
     try { [void]$k32::CloseHandle($hInst) } catch {}
     $script:hInst = [IntPtr]::Zero
   }
-  if (-not (Get-Process -Id $Installer -ErrorAction SilentlyContinue)) { return $false }
-  $now = $null
-  if ($installerStart) { $now = Get-StartTicks ([IntPtr]::Zero) $Installer; if ($now -and $now -ne $installerStart) { return $false } }
-  # Ohne vergleichbare Startzeit: Abschluss ueber das Ergebnis genau dieses Versuchs erkennen. Das Skript
-  # veroeffentlicht Update-<Kennung>.log als Letztes; steht die Datei seit 10 s, gilt das Update als beendet (eine
-  # wiederverwendete Prozess-ID haelt den Neustart dann nicht auf).
-  if (-not ($installerStart -and $now) -and (Test-Path -LiteralPath $workLog)) {
-    if (-not $script:logSeen) { $script:logSeen = Get-Date }
-    elseif (((Get-Date) - $script:logSeen).TotalSeconds -ge 10) { return $false }
-  }
-  return $true
+  $p = Get-Process -Id $Installer -ErrorAction SilentlyContinue
+  if (-not $p) { $script:endConfirmed = $true; return $false }
+  if ($instTicks -ne $null) { $now = Get-InstallerTicks; if ($now -ne $null -and $now -ne $instTicks) { $script:endConfirmed = $true; return $false }; return $true }
+  # Identitaet ungeklaert (kein Handle, keine Startzeit): Ein Prozess mit dieser ID beweist nichts. Dann zaehlt nur
+  # noch die Ergebnisdatei dieses Versuchs (oben); kommt sie nicht innerhalb einer kurzen Frist, endet das Warten,
+  # und ohne Ergebnis wird ein unklarer Zustand gemeldet (kein Neustart). Nur wenn gar kein Prozess mit dieser ID
+  # mehr laeuft, ist das Update sicher beendet (siehe oben).
+  if (-not $waitNote) { $script:waitNote = 'Das Update liess sich nur ueber die Prozess-ID verfolgen.' }
+  if ($script:unclearEnd -eq $null) { $script:unclearEnd = (Get-Date).AddMinutes(2) }
+  return ((Get-Date) -lt $script:unclearEnd)
 }
 # Neustart erst nach bestaetigtem Ende des Installers; bei Fristablauf Fehler melden und nicht starten
 $end = (Get-Date).AddMinutes(15)
-# Ergebnis genau dieses Versuchs (Update-<Kennung>.log im Arbeitsordner, vom Skript als Letztes atomar veroeffentlicht)
-$workLog = Join-Path $Work ('Update-' + $AttemptId + '.log')
 $finished = $false
 while ((Get-Date) -lt $end) {
   if (-not (Test-Installer)) { $finished = $true; break }
@@ -2143,13 +2353,23 @@ if (-not $finished) {
 }
 Start-Sleep -Milliseconds 300
 $text = $null
-if ((Test-Path -LiteralPath $workLog) -and (Get-Item -LiteralPath $workLog).Length -le 16384) { $text = Get-Content -LiteralPath $workLog -Raw -Encoding UTF8 }
+try {
+  $fs = [System.IO.File]::Open($workLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+  try {
+    $b = New-Object byte[] 16385
+    $n = 0
+    while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+  } finally { $fs.Dispose() }
+  if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF) }
+} catch {}
 if ($text) { $text = $text.Trim() }
-if ($Attempt) { Remove-Item -LiteralPath $Attempt -Recurse -Force }
+# Versuchsordner (Eingabedateien des Updates) nur bei belegtem Ende loeschen: Laeuft das Update moeglicherweise noch,
+# bleibt er erhalten und wird spaeter von der Bereinigung entfernt
+if ($Attempt -and $endConfirmed) { Remove-Item -LiteralPath $Attempt -Recurse -Force }
 # Neustart nur bei eindeutigem Abschluss: installiert (OK) oder nichts veraendert bzw. vollstaendig zurueckgesetzt (FEHLER)
 $clear = $text -and ($text -match '^(OK|FEHLER|ZURUECK) ') -and -not (Test-Path -LiteralPath (Join-Path $Work 'Wiederherstellung-offen'))
 if (-not $clear) {
-  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.'; if ($waitNote) { $text += ' ' + $waitNote } }
   ($text + ' Dock Pilot wurde nicht neu gestartet.') | Out-File -LiteralPath $Log -Encoding utf8
   exit
 }
