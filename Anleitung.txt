@@ -252,9 +252,12 @@ und das Update wird nicht installiert.
 Übernommen werden nur "Dock Pilot.exe" und "Anleitung.txt". Ist dafür
 Administratorrecht nötig, läuft das Update in einem nur für Administratoren
 beschreibbaren Ordner, und Dock Pilot startet danach wieder mit normalen Rechten.
-Läuft Dock Pilot selbst gerade mit Administratorrechten, wird nicht aktualisiert:
-bitte Dock Pilot normal starten. Die Dateien werden erst nach dem Beenden von
-Dock Pilot und jeweils in einem Schritt ersetzt. Schlägt ein Update fehl, läuft
+Läuft Dock Pilot selbst gerade mit Administratorrechten, startet es sich für das
+Update mit normalen Rechten neu und installiert dann. Gibt es auf dem PC keine
+normalen Rechte (Benutzerkontensteuerung aus oder eingebautes Konto
+"Administrator", z. B. auf Windows Server), wird mit Administratorrechten
+aktualisiert, aber immer über den geschützten Ordner. Die Dateien werden erst
+nach dem Beenden von Dock Pilot und jeweils in einem Schritt ersetzt. Schlägt ein Update fehl, läuft
 die bisherige Version weiter; Einzelheiten stehen in Fehler.log. Wurde ein Update
 unterbrochen (z. B. durch einen Absturz), stellt Dock Pilot beim nächsten Update
 nach Rückfrage die vorherige Version wieder her; hatte es noch nichts verändert,

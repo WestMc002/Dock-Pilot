@@ -103,18 +103,38 @@ namespace DockPilot
             float shelfOuter = _edgeDist + Math.Max(_shelfThick, _padA + anchor.Size) + gap;
             // Menü innerhalb des Bildschirms halten, auf dem das Dock liegt. Windows prüft nur den gesamten Desktop –
             // beim letzten Symbol am Rand ragte das Menü sonst auf den Nachbarbildschirm.
-            Size size = menu.GetPreferredSize(Size.Empty);
+            // Die obere linke Ecke wird selbst berechnet und immer mit BelowRight geöffnet: Bei AboveRight/Left rechnet
+            // Windows Forms selbst und wählt am Rand den Bildschirm, auf dem der größere Teil läge.
             Rectangle area = Screen.FromRectangle(_monitor.Width > 0 ? _monitor : _winRect).WorkingArea;
             int margin = (int)R(4);
-            int x = Math.Max(area.Left + margin, Math.Min(r.Left, area.Right - margin - size.Width));
-            int y = Math.Max(area.Top + margin, Math.Min(r.Top, area.Bottom - margin - size.Height));
-            switch (_s.Edge)
+            Rectangle winRect = _winRect;
+            DockEdge edge = _s.Edge;
+            Func<Size, Point> place = delegate (Size size)
             {
-                case DockEdge.Oben: menu.Show(new Point(x, _winRect.Top + (int)shelfOuter), ToolStripDropDownDirection.BelowRight); break;
-                case DockEdge.Unten: menu.Show(new Point(x, _winRect.Bottom - (int)shelfOuter), ToolStripDropDownDirection.AboveRight); break;
-                case DockEdge.Links: menu.Show(new Point(_winRect.Left + (int)shelfOuter, y), ToolStripDropDownDirection.Right); break;
-                default: menu.Show(new Point(_winRect.Right - (int)shelfOuter, y), ToolStripDropDownDirection.Left); break;
-            }
+                int x = Math.Max(area.Left + margin, Math.Min(r.Left, area.Right - margin - size.Width));
+                int y = Math.Max(area.Top + margin, Math.Min(r.Top, area.Bottom - margin - size.Height));
+                switch (edge)
+                {
+                    case DockEdge.Oben: y = winRect.Top + (int)shelfOuter; break;
+                    case DockEdge.Unten: y = winRect.Bottom - (int)shelfOuter - size.Height; break;
+                    case DockEdge.Links: x = winRect.Left + (int)shelfOuter; break;
+                    default: x = winRect.Right - (int)shelfOuter - size.Width; break;
+                }
+                // zuletzt sicher in den Arbeitsbereich dieses Bildschirms
+                x = Math.Max(area.Left, Math.Min(x, area.Right - size.Width));
+                y = Math.Max(area.Top, Math.Min(y, area.Bottom - size.Height));
+                return new Point(x, y);
+            };
+            Size pref = menu.GetPreferredSize(Size.Empty);
+            if (pref.Width <= 0 || pref.Height <= 0) pref = menu.Size;
+            // Die vorab ermittelte Größe kann von der tatsächlichen abweichen (Symbole, Schrift, Höchstbreite):
+            // nach dem Öffnen mit der echten Größe nachrücken, falls nötig
+            menu.Opened += delegate
+            {
+                Point p = place(menu.Size);
+                if (menu.Location != p) menu.Location = p;
+            };
+            menu.Show(place(pref), ToolStripDropDownDirection.BelowRight);
         }
 
         // ------------------------------------------------------------------ Fenstervorschau

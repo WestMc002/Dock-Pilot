@@ -171,6 +171,17 @@ namespace DockPilot
                     Updater.CheckAsync(_settings, _invoker, false, delegate { TryAutoUpdate(); });
             };
             _updateTimer.Start();
+            // „--aktualisieren“: mit normalen Rechten neu gestartet, um das Update zu installieren (ohne neue Rückfrage)
+            if (Program.InstallNow && !Demo.Active && !Autostart.IsElevated)
+                Updater.CheckAsync(_settings, _invoker, false, delegate
+                {
+                    if (!Updater.CanInstall()) return;
+                    Updater.InstallSilently(_invoker, trayOnly, delegate (string error)
+                    {
+                        MessageBox.Show("Update nicht installiert – Dock Pilot läuft in der bisherigen Version weiter.\n\n" + error,
+                            AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    });
+                });
             _autoRetry = new System.Windows.Forms.Timer();
             _autoRetry.Interval = 5 * 60 * 1000;
             _autoRetry.Tick += delegate { _autoRetry.Stop(); TryAutoUpdate(); };
@@ -356,7 +367,11 @@ namespace DockPilot
         /// </summary>
         private void TryAutoUpdate()
         {
-            if (Demo.Active || !_settings.UpdateCheck || !_settings.AutoInstall || !Updater.CanInstall()) return;
+            if (Demo.Active || !_settings.UpdateCheck || !_settings.AutoInstall) return;
+            // läuft Dock Pilot mit Administratorrechten: mit normalen Rechten neu starten und dort installieren
+            // (nie nach „--aktualisieren“, damit sich nichts im Kreis startet)
+            bool restart = !Program.InstallNow && Updater.OnlyElevationBlocks();
+            if (!restart && !Updater.CanInstall()) return;
             if (BusyForUpdate())
             {
                 _autoRetry.Stop();
@@ -364,6 +379,11 @@ namespace DockPilot
                 return;
             }
             _autoRetry.Stop();
+            if (restart)
+            {
+                if (Updater.RestartUnelevated(VisibleForm == null)) ExitApp();
+                return;
+            }
             Updater.InstallSilently(_invoker, VisibleForm == null);
         }
 
