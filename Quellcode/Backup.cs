@@ -191,7 +191,36 @@ namespace DockPilot
                 catch { return true; }
                 return IsRedirected(s);
             }
+            // nicht vollständig angegebene Pfade mit Ordnerteil (relativ wie „..\Ordner\Datei“ oder „\Ordner“ ohne
+            // Laufwerk): wie beim Öffnen auflösen und das Ergebnis prüfen – über eine Umleitung könnte es sonst
+            // unbemerkt auf eine Freigabe zeigen. Adressen wie „shell:…“ oder „https://…“ sind keine Dateipfade.
+            if ((s.IndexOf('\\') >= 0 || s.IndexOf('/') >= 0) && s.IndexOf(':') < 0)
+            {
+                string full;
+                try { full = Path.GetFullPath(s); }
+                catch { return true; }
+                if (full.Length >= 3 && full[1] == ':' && char.IsLetter(full[0])) return IsNetwork(full);
+                return true; // unklar: lieber als Netzwerk behandeln
+            }
             return false;
+        }
+
+        /// <summary>
+        /// Netzwerkprüfung für eine Symbolangabe ("Datei?Index"): genauso aufgelöst wie beim Laden (Umgebungsvariablen,
+        /// relative Angaben im Symbolordner), dann wie jeder andere Pfad geprüft.
+        /// </summary>
+        public static bool IsNetworkIcon(string spec)
+        {
+            if (string.IsNullOrEmpty(spec)) return false;
+            if (IsNetwork(IconLoader.SplitSpecRaw(spec))) return true;
+            int index;
+            string file;
+            try { file = IconLoader.SplitSpec(spec, out index); }
+            catch { return true; }
+            if (string.IsNullOrEmpty(file)) return false;
+            try { file = Path.GetFullPath(file); }
+            catch { return true; }
+            return IsNetwork(file);
         }
 
         /// <summary>
@@ -224,7 +253,7 @@ namespace DockPilot
         {
             if (it.IsSeparator) return false;
             if (IsNetwork(it.Kind == ItemKind.Ordnermenue ? it.Folder : it.Command) || IsNetwork(it.WorkingDirectory)) return true;
-            return icon && IsNetwork(IconLoader.SplitSpecRaw(it.Icon));
+            return icon && IsNetworkIcon(it.Icon);
         }
 
         private static string Short(string name)
@@ -263,7 +292,7 @@ namespace DockPilot
                     {
                         if (!withNetwork && UsesNetwork(it, false)) continue;
                         DockItem copy = it.Clone();
-                        if (!withNetwork && IsNetwork(IconLoader.SplitSpecRaw(copy.Icon))) copy.Icon = "";
+                        if (!withNetwork && IsNetworkIcon(copy.Icon)) copy.Icon = "";
                         if (!withAdmin) copy.RunAsAdmin = false;
                         if (!withHotkeys) { copy.HotkeyKey = 0; copy.HotkeyModifiers = 0; }
                         items.Add(copy);
