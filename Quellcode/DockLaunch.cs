@@ -69,6 +69,8 @@ namespace DockPilot
             return new Rectangle(_winRect.Left + (int)r.X, _winRect.Top + (int)r.Y, (int)r.Width, (int)r.Height);
         }
 
+        private static bool _menuMoveLogged;
+
         private void ShowAt(ContextMenuStrip menu, Slot anchor)
         {
             HidePreview();
@@ -93,14 +95,11 @@ namespace DockPilot
             // Menü nach vorne holen: dann schließt es wie gewohnt beim Klick irgendwo anders (oder mit Esc).
             // Das Dock selbst wird nie aktiv, ohne das bekäme das Menü vom Wegklicken nichts mit.
             menu.Opened += delegate { DockNative.BringToFront(menu.Handle); };
-            if (anchor == null)
-            {
-                menu.Show(Cursor.Position);
-                return;
-            }
-            Rectangle r = ScreenRect(anchor);
+            // Kontextmenü (Rechtsklick) ohne Symbol als Anker: an der Mausposition öffnen
+            Point cursor = Cursor.Position;
+            Rectangle r = anchor != null ? ScreenRect(anchor) : new Rectangle(cursor, Size.Empty);
             int gap = (int)R(6);
-            float shelfOuter = _edgeDist + Math.Max(_shelfThick, _padA + anchor.Size) + gap;
+            float shelfOuter = anchor != null ? _edgeDist + Math.Max(_shelfThick, _padA + anchor.Size) + gap : 0;
             // Menü innerhalb des Bildschirms halten, auf dem das Dock liegt. Windows prüft nur den gesamten Desktop –
             // beim letzten Symbol am Rand ragte das Menü sonst auf den Nachbarbildschirm.
             // Die obere linke Ecke wird selbst berechnet und immer mit BelowRight geöffnet: Bei AboveRight/Left rechnet
@@ -109,10 +108,21 @@ namespace DockPilot
             int margin = (int)R(4);
             Rectangle winRect = _winRect;
             DockEdge edge = _s.Edge;
+            bool atCursor = anchor == null;
             Func<Size, Point> place = delegate (Size size)
             {
                 int x = Math.Max(area.Left + margin, Math.Min(r.Left, area.Right - margin - size.Width));
                 int y = Math.Max(area.Top + margin, Math.Min(r.Top, area.Bottom - margin - size.Height));
+                if (atCursor)
+                {
+                    // wie Windows: rechts unterhalb der Maus; passt es dort nicht auf den Bildschirm des Docks,
+                    // nach links bzw. oben aufklappen – nie auf den Nachbarbildschirm
+                    x = cursor.X + size.Width <= area.Right ? cursor.X : cursor.X - size.Width;
+                    y = cursor.Y + size.Height <= area.Bottom ? cursor.Y : cursor.Y - size.Height;
+                    x = Math.Max(area.Left, Math.Min(x, area.Right - size.Width));
+                    y = Math.Max(area.Top, Math.Min(y, area.Bottom - size.Height));
+                    return new Point(x, y);
+                }
                 switch (edge)
                 {
                     case DockEdge.Oben: y = winRect.Top + (int)shelfOuter; break;
@@ -125,14 +135,29 @@ namespace DockPilot
                 y = Math.Max(area.Top, Math.Min(y, area.Bottom - size.Height));
                 return new Point(x, y);
             };
+            // Erst anordnen, dann messen: Ohne Layout liefert GetPreferredSize eine zu kleine Größe (die Einträge sind
+            // noch nicht vermessen). Windows Forms ordnet vor dem Zeigen selbst an und hält das Menü dann auf dem
+            // Bildschirm, auf dem der größere Teil liegt – mit der zu kleinen Größe ragte es am rechten Rand über.
+            menu.PerformLayout();
             Size pref = menu.GetPreferredSize(Size.Empty);
             if (pref.Width <= 0 || pref.Height <= 0) pref = menu.Size;
-            // Die vorab ermittelte Größe kann von der tatsächlichen abweichen (Symbole, Schrift, Höchstbreite):
-            // nach dem Öffnen mit der echten Größe nachrücken, falls nötig
+            // Sicherheitsnetz: nach dem Öffnen mit der echten Fenstergröße prüfen und notfalls direkt verschieben
+            // (SetWindowPos, ohne dass Windows Forms die Lage noch einmal „korrigiert“)
             menu.Opened += delegate
             {
-                Point p = place(menu.Size);
-                if (menu.Location != p) menu.Location = p;
+                NativeMethods.RECT wr;
+                if (!NativeMethods.GetWindowRect(menu.Handle, out wr)) return;
+                Size real = new Size(wr.Right - wr.Left, wr.Bottom - wr.Top);
+                Point p = place(real);
+                if (wr.Left == p.X && wr.Top == p.Y) return;
+                NativeMethods.SetWindowPos(menu.Handle, IntPtr.Zero, p.X, p.Y, 0, 0, 0x0001 | 0x0004 | 0x0010); // NOSIZE, NOZORDER, NOACTIVATE
+                if (!_menuMoveLogged)
+                {
+                    _menuMoveLogged = true; // einmal je Start: zeigt, ob die Vorab-Größe noch abweicht
+                    Log.Write("Menü", "Menü nachgerückt: war " + wr.Left + "," + wr.Top + ", jetzt " + p.X + "," + p.Y +
+                        "; vorab " + pref.Width + "x" + pref.Height + ", tatsächlich " + real.Width + "x" + real.Height +
+                        "; Bereich " + area);
+                }
             };
             menu.Show(place(pref), ToolStripDropDownDirection.BelowRight);
         }
